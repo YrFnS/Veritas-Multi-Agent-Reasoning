@@ -1,5 +1,5 @@
-import { useState, useCallback } from 'react';
-import { SystemConfig, LogEntry, ProcessState, ChatHistoryItem } from '../types';
+import { useState, useCallback, useRef } from 'react';
+import { SystemConfig, LogEntry, ProcessState, ChatHistoryItem, AgentConfig } from '../types';
 import { MultiAgentService } from '../services/geminiService';
 
 const uuid = () => Math.random().toString(36).substring(2, 9);
@@ -12,133 +12,94 @@ export const useReasoningEngine = (config: SystemConfig) => {
   const [chatHistory, setChatHistory] = useState<ChatHistoryItem[]>([]);
   const [currentRound, setCurrentRound] = useState<number>(0);
 
-  const startReasoning = useCallback(async (userPrompt: string) => {
-    const apiKey = process.env.API_KEY;
-    if (!apiKey) {
-      console.error("API Key missing");
-      return;
-    }
+  // Helper to add logs efficiently
+  const addLog = useCallback((log: LogEntry) => {
+      setLogs(prev => {
+          // Remove previous thinking log from same agent to prevent clutter
+          const filtered = prev.filter(l => !(l.agentRole === log.agentRole && l.isThinking));
+          return [...filtered, log];
+      });
+  }, []);
 
-    setProcessState(ProcessState.ANALYZING);
-    setFinalResult(null);
-    setCurrentRound(0);
-    setActiveAgentName(null);
+  const addWorkflowLog = useCallback((log: LogEntry) => {
+      setLogs(prev => {
+          const filtered = prev.filter(l => !(l.agentName === log.agentName && l.isThinking));
+          return [...filtered, log];
+      });
+  }, []);
 
-    // 1. Inject User Input into Logs (without clearing previous)
-    const userLog: LogEntry = {
-        id: uuid(),
-        agentRole: 'user',
-        agentName: 'OPERATOR',
-        content: userPrompt,
-        timestamp: Date.now()
-    };
-    
-    setLogs(prev => {
-        const newLogs = [...prev];
-        // Add a system separator if this is a follow-up
-        if (prev.length > 0) {
-           newLogs.push({
-             id: `sep-${Date.now()}`,
-             agentRole: 'system',
-             agentName: 'SYSTEM',
-             content: 'NEW_CYCLE_INITIATED',
-             timestamp: Date.now()
-           });
-        }
-        return [...newLogs, userLog];
-    });
+  // --- SUB-HANDLERS ---
 
-    const service = new MultiAgentService(apiKey);
-
-    try {
-      // CHECK FOR INTERROGATION COMMAND (@AgentName: ...)
-      const interrogationMatch = userPrompt.match(/^@([\w_]+):\s*(.+)/i);
+  const handleInterrogation = async (
+      service: MultiAgentService, 
+      targetAgent: AgentConfig, 
+      query: string, 
+      chatHistory: ChatHistoryItem[]
+  ) => {
+      setProcessState(ProcessState.INTERROGATION);
+      setActiveAgentName(targetAgent.name);
       
-      if (interrogationMatch) {
-         const targetName = interrogationMatch[1];
-         const query = interrogationMatch[2];
-         
-         const targetAgent = config.agents.find(a => 
-             a.name.toLowerCase() === targetName.toLowerCase() || 
-             a.role.toLowerCase() === targetName.toLowerCase()
-         );
+      const result = await service.runAgentInspection(
+          targetAgent,
+          query,
+          config,
+          chatHistory,
+          addLog
+      );
+      
+      setFinalResult(result);
+      setProcessState(ProcessState.COMPLETE);
+      setActiveAgentName(null);
+  };
 
-         if (targetAgent) {
-             setProcessState(ProcessState.INTERROGATION);
-             setActiveAgentName(targetAgent.name);
-             
-             const result = await service.runAgentInspection(
-                 targetAgent,
-                 query,
-                 config,
-                 chatHistory,
-                 (log) => {
-                     setLogs(prev => {
-                         const filtered = prev.filter(l => !(l.agentRole === log.agentRole && l.isThinking));
-                         return [...filtered, log];
-                     });
-                 }
-             );
-             
-             setFinalResult(result);
-             setProcessState(ProcessState.COMPLETE); // Or IDLE to indicate ready? COMPLETE triggers sound.
-             setActiveAgentName(null);
-             return;
-         }
-      }
-
-      // CHECK FOR CUSTOM WORKFLOW
-      if (config.workflow && config.workflow.length > 0) {
-          setProcessState(ProcessState.WORKFLOW_RUNNING);
+  const handleWorkflow = async (
+      service: MultiAgentService,
+      userPrompt: string,
+      chatHistory: ChatHistoryItem[]
+  ) => {
+      setProcessState(ProcessState.WORKFLOW_RUNNING);
           
-          const result = await service.runCustomChain(
-              userPrompt,
-              config,
-              chatHistory,
-              (log) => {
-                  setLogs(prev => {
-                      const filtered = prev.filter(l => !(l.agentName === log.agentName && l.isThinking));
-                      return [...filtered, log];
-                  });
-                  if (log.isThinking) {
-                      setActiveAgentName(log.agentName);
-                  }
-              }
-          );
-          
-          setFinalResult(result);
-          setProcessState(ProcessState.COMPLETE);
-          setActiveAgentName(null);
-          
-          const verdictLog: LogEntry = {
-              id: uuid(),
-              agentRole: 'verdict',
-              agentName: 'WORKFLOW_COMPLETE',
-              content: result,
-              timestamp: Date.now()
-          };
-          setLogs(prev => [...prev, verdictLog]);
+      const result = await service.runCustomChain(
+          userPrompt,
+          config,
+          chatHistory,
+          (log) => {
+              addWorkflowLog(log);
+              if (log.isThinking) setActiveAgentName(log.agentName);
+          }
+      );
+      
+      setFinalResult(result);
+      setProcessState(ProcessState.COMPLETE);
+      setActiveAgentName(null);
+      
+      const verdictLog: LogEntry = {
+          id: uuid(),
+          agentRole: 'verdict',
+          agentName: 'WORKFLOW_COMPLETE',
+          content: result,
+          timestamp: Date.now()
+      };
+      setLogs(prev => [...prev, verdictLog]);
 
-          setChatHistory(prev => [
-            ...prev,
-            { role: 'user', content: userPrompt },
-            { role: 'model', content: result }
-          ]);
-          return;
-      }
+      setChatHistory(prev => [
+        ...prev,
+        { role: 'user', content: userPrompt },
+        { role: 'model', content: result }
+      ]);
+  };
 
-      // STANDARD REASONING CHAIN (DEFAULT DEBATE)
+  const handleStandardDebate = async (
+      service: MultiAgentService,
+      userPrompt: string,
+      chatHistory: ChatHistoryItem[]
+  ) => {
       const result = await service.runReasoningChain(
         userPrompt, 
         config, 
         chatHistory,
         (log) => {
-          setLogs(prev => {
-            // Remove previous thinking log from same agent to prevent clutter
-            const filtered = prev.filter(l => !(l.agentRole === log.agentRole && l.isThinking));
-            return [...filtered, log];
-          });
-          
+          addLog(log);
           if (log.isThinking) {
              setActiveAgentName(log.agentName);
              const stateMap: Record<string, ProcessState> = {
@@ -157,7 +118,6 @@ export const useReasoningEngine = (config: SystemConfig) => {
       setProcessState(ProcessState.COMPLETE);
       setActiveAgentName(null);
 
-      // 2. Append Final Verdict to Logs
       const verdictLog: LogEntry = {
           id: uuid(),
           agentRole: 'verdict',
@@ -167,12 +127,77 @@ export const useReasoningEngine = (config: SystemConfig) => {
       };
       setLogs(prev => [...prev, verdictLog]);
 
-      // 3. Update Chat History
       setChatHistory(prev => [
         ...prev,
         { role: 'user', content: userPrompt },
         { role: 'model', content: result }
       ]);
+  };
+
+  // --- MAIN ENTRY POINT ---
+
+  const startReasoning = useCallback(async (userPrompt: string) => {
+    const apiKey = process.env.API_KEY;
+    if (!apiKey) {
+      console.error("API Key missing");
+      return;
+    }
+
+    setProcessState(ProcessState.ANALYZING);
+    setFinalResult(null);
+    setCurrentRound(0);
+    setActiveAgentName(null);
+
+    // Initial User Log
+    const userLog: LogEntry = {
+        id: uuid(),
+        agentRole: 'user',
+        agentName: 'OPERATOR',
+        content: userPrompt,
+        timestamp: Date.now()
+    };
+    
+    setLogs(prev => {
+        const newLogs = [...prev];
+        if (prev.length > 0) {
+           newLogs.push({
+             id: `sep-${Date.now()}`,
+             agentRole: 'system',
+             agentName: 'SYSTEM',
+             content: 'NEW_CYCLE_INITIATED',
+             timestamp: Date.now()
+           });
+        }
+        return [...newLogs, userLog];
+    });
+
+    const service = new MultiAgentService(apiKey);
+
+    try {
+      // 1. Interrogation Check
+      const interrogationMatch = userPrompt.match(/^@([\w_]+):\s*(.+)/i);
+      if (interrogationMatch) {
+         const targetName = interrogationMatch[1];
+         const query = interrogationMatch[2];
+         const targetAgent = config.agents.find(a => 
+             a.name.toLowerCase() === targetName.toLowerCase() || 
+             a.role.toLowerCase() === targetName.toLowerCase()
+         );
+
+         if (targetAgent) {
+             await handleInterrogation(service, targetAgent, query, chatHistory);
+             return;
+         }
+      }
+
+      // 2. Custom Workflow Check
+      if (config.workflow && config.workflow.length > 0) {
+          await handleWorkflow(service, userPrompt, chatHistory);
+          return;
+      }
+
+      // 3. Standard Debate
+      await handleStandardDebate(service, userPrompt, chatHistory);
 
     } catch (e) {
       console.error(e);
@@ -182,11 +207,11 @@ export const useReasoningEngine = (config: SystemConfig) => {
         id: 'ERR', 
         agentRole: 'judge', 
         agentName: 'SYSTEM', 
-        content: 'CRITICAL FAILURE', 
+        content: 'CRITICAL FAILURE: ' + (e as Error).message, 
         timestamp: Date.now()
       }]);
     }
-  }, [config, chatHistory]);
+  }, [config, chatHistory, addLog, addWorkflowLog]);
 
   const clearMemory = useCallback(() => {
     setChatHistory([]);
