@@ -1,1 +1,1 @@
-// DEPRECATED: This file has been moved to features/reasoning/components/AgentCard.tsx
+// FILE DELETED: Logic moved to features/reasoning/components/AgentCard.tsx

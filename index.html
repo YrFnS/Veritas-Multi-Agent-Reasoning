@@ -31,6 +31,7 @@
               'pulse-fast': 'pulse 1s cubic-bezier(0.4, 0, 0.6, 1) infinite',
               'scanline': 'scanline 8s linear infinite',
               'glitch': 'glitch 1s linear infinite',
+              'turn-on': 'turn-on 0.5s linear forwards',
             },
             keyframes: {
               scanline: {
@@ -41,6 +42,11 @@
                 '2%, 64%': { transform: 'translate(2px,0) skew(0deg)' },
                 '4%, 60%': { transform: 'translate(-2px,0) skew(0deg)' },
                 '62%': { transform: 'translate(0,0) skew(5deg)' },
+              },
+              'turn-on': {
+                '0%': { transform: 'scale(1,0.01) translate3d(0,0,0)', filter: 'brightness(0)', opacity: '1' },
+                '60%': { transform: 'scale(1,0.01) translate3d(0,0,0)', filter: 'brightness(2)', opacity: '1' },
+                '100%': { transform: 'scale(1,1) translate3d(0,0,0)', filter: 'brightness(1)', opacity: '1' }
               }
             }
           },
@@ -52,6 +58,9 @@
         background-color: #030303;
         color: #e5e5e5;
         overflow: hidden;
+      }
+      #root {
+        animation: turn-on 0.4s cubic-bezier(0.23, 1, 0.32, 1);
       }
       .bg-grid {
         background-size: 40px 40px;

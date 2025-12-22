@@ -1,1 +1,1 @@
-// DEPRECATED: This file has been moved to features/reasoning/components/ReasoningLog.tsx
+// FILE DELETED: Logic moved to features/reasoning/components/ReasoningLog.tsx
