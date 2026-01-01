@@ -1,6 +1,7 @@
 import React from 'react';
 import { ProcessState, SystemConfig } from '../types';
 import { Tooltip } from '../../../components/Tooltip';
+import { AuthBadge } from './AuthBadge';
 
 interface VeritasHeaderProps {
   isSidebarOpen: boolean;
@@ -18,6 +19,8 @@ interface VeritasHeaderProps {
   onReset: () => void;
   onConfigOpen: () => void;
   playVerdict: () => void;
+  manualApiKey: string | null;
+  onSetManualKey: (key: string | null) => void;
 }
 
 export const VeritasHeader: React.FC<VeritasHeaderProps> = ({
@@ -35,7 +38,9 @@ export const VeritasHeader: React.FC<VeritasHeaderProps> = ({
   onExport,
   onReset,
   onConfigOpen,
-  playVerdict
+  playVerdict,
+  manualApiKey,
+  onSetManualKey
 }) => {
   return (
     <header className="h-14 border-b border-zinc-800 bg-black flex justify-between items-center px-4 md:px-6 relative z-50 shrink-0 select-none">
@@ -116,7 +121,15 @@ export const VeritasHeader: React.FC<VeritasHeaderProps> = ({
                 </div>
             </Tooltip>
         </div>
-        <div className="flex gap-2">
+        
+        {/* RIGHT SIDE ACTIONS */}
+        <div className="flex items-center gap-2">
+            
+            {/* AUTH / SUBSCRIPTION BADGE */}
+            <AuthBadge manualApiKey={manualApiKey} onSetManualKey={onSetManualKey} />
+
+            <div className="h-4 w-px bg-zinc-800 mx-1 hidden md:block"></div>
+
             <Tooltip content={isMuted ? "Enable Audio Feedback" : "Mute Audio Feedback"} position="bottom">
                 <button 
                 onClick={toggleMute}

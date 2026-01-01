@@ -4,7 +4,7 @@ import { MultiAgentService } from '../services/geminiService';
 
 const uuid = () => Math.random().toString(36).substring(2, 9);
 
-export const useReasoningEngine = (config: SystemConfig) => {
+export const useReasoningEngine = (config: SystemConfig, manualApiKey: string | null) => {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [processState, setProcessState] = useState<ProcessState>(ProcessState.IDLE);
   const [activeAgentName, setActiveAgentName] = useState<string | null>(null);
@@ -15,7 +15,6 @@ export const useReasoningEngine = (config: SystemConfig) => {
   // Helper to add logs efficiently
   const addLog = useCallback((log: LogEntry) => {
       setLogs(prev => {
-          // Remove previous thinking log from same agent to prevent clutter
           const filtered = prev.filter(l => !(l.agentRole === log.agentRole && l.isThinking));
           return [...filtered, log];
       });
@@ -137,9 +136,23 @@ export const useReasoningEngine = (config: SystemConfig) => {
   // --- MAIN ENTRY POINT ---
 
   const startReasoning = useCallback(async (userPrompt: string) => {
-    const apiKey = process.env.API_KEY;
+    // RESOLVE AUTH METHOD
+    // 1. Manual Key
+    // 2. Process Env (which handles Subscription injection automatically)
+    const apiKey = manualApiKey || process.env.API_KEY;
+    
+    // Determine Auth Mode for Logging
+    const authSource = manualApiKey ? 'MANUAL_OVERRIDE' : (process.env.API_KEY ? 'SUBSCRIPTION_UPLINK' : 'UNKNOWN_SOURCE');
+    
     if (!apiKey) {
       console.error("API Key missing");
+      setLogs(prev => [...prev, {
+        id: 'ERR_KEY', 
+        agentRole: 'system', 
+        agentName: 'SYSTEM', 
+        content: 'AUTHENTICATION ERROR: No Uplink Detected.\nPlease Connect Google Subscription or Enter API Key.', 
+        timestamp: Date.now()
+      }]);
       return;
     }
 
@@ -163,8 +176,16 @@ export const useReasoningEngine = (config: SystemConfig) => {
            newLogs.push({
              id: `sep-${Date.now()}`,
              agentRole: 'system',
-             agentName: 'SYSTEM',
-             content: 'NEW_CYCLE_INITIATED',
+             agentName: 'SYSTEM', 
+             content: `NEW_CYCLE_INITIATED [AUTH: ${authSource}]`,
+             timestamp: Date.now()
+           });
+        } else {
+             newLogs.push({
+             id: `boot-${Date.now()}`,
+             agentRole: 'system',
+             agentName: 'SYSTEM', 
+             content: `VERITAS KERNEL ONLINE [AUTH: ${authSource}]`,
              timestamp: Date.now()
            });
         }
@@ -211,7 +232,7 @@ export const useReasoningEngine = (config: SystemConfig) => {
         timestamp: Date.now()
       }]);
     }
-  }, [config, chatHistory, addLog, addWorkflowLog]);
+  }, [config, chatHistory, addLog, addWorkflowLog, manualApiKey]);
 
   const clearMemory = useCallback(() => {
     setChatHistory([]);
