@@ -3,7 +3,9 @@ import { ReasoningLog } from './features/reasoning/components/ReasoningLog';
 import { ConfigEditor } from './features/reasoning/components/ConfigEditor';
 import { VeritasHeader } from './features/reasoning/components/VeritasHeader';
 import { VeritasSidebar } from './features/reasoning/components/VeritasSidebar';
+import { VoiceControl } from './features/reasoning/components/VoiceControl';
 import { BootSequence } from './components/BootSequence';
+import { NeuralBackground } from './components/NeuralBackground';
 import { DEFAULT_CONFIG, PRESETS } from './features/reasoning/constants';
 import { SystemConfig, ProcessState } from './features/reasoning/types';
 import { useReasoningEngine } from './features/reasoning/hooks/useReasoningEngine';
@@ -19,6 +21,7 @@ const App: React.FC = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [activePreset, setActivePreset] = useState<string>('DEFAULT');
   const [isEditingConfig, setIsEditingConfig] = useState(false);
+  const [isVoiceActive, setIsVoiceActive] = useState(false);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -65,10 +68,10 @@ const App: React.FC = () => {
 
   // Auto-focus Input
   useEffect(() => {
-    if (!isBooting && !isProcessing && typeof window !== 'undefined' && window.matchMedia('(min-width: 768px)').matches) {
+    if (!isBooting && !isProcessing && !isVoiceActive && typeof window !== 'undefined' && window.matchMedia('(min-width: 768px)').matches) {
         textareaRef.current?.focus();
     }
-  }, [processState, isBooting, isProcessing]);
+  }, [processState, isBooting, isProcessing, isVoiceActive]);
 
   // Global Keyboard Shortcuts
   useEffect(() => {
@@ -147,7 +150,10 @@ const App: React.FC = () => {
       />
 
       <main className="flex-1 flex overflow-hidden relative">
-        <div className="absolute inset-0 bg-grid-pattern opacity-10 pointer-events-none"></div>
+        <NeuralBackground />
+        
+        {/* Subtle grid overlay remains for texture, but clearer */}
+        <div className="absolute inset-0 bg-grid-pattern opacity-5 pointer-events-none"></div>
 
         <VeritasSidebar 
           isOpen={isSidebarOpen}
@@ -162,20 +168,34 @@ const App: React.FC = () => {
         />
 
         {/* CENTER DASHBOARD */}
-        <section className="flex-1 flex flex-col min-w-0 bg-black/20 relative z-10">
+        <section className="flex-1 flex flex-col min-w-0 bg-black/10 relative z-10 backdrop-blur-[1px]">
           <div className="flex-1 relative border-b border-zinc-800 overflow-hidden flex flex-col">
              <ReasoningLog logs={logs} agents={config.agents} />
           </div>
 
           {/* INPUT AREA */}
-          <div className="bg-black border-t border-zinc-800 p-4 flex flex-col md:flex-row gap-4 items-center shrink-0 shadow-[-10px_-10px_30px_rgba(0,0,0,0.5)] z-20">
-             <div className="flex-1 relative w-full h-24 md:h-24 group">
+          <div className="bg-black border-t border-zinc-800 p-4 flex flex-col md:flex-row gap-4 items-stretch shrink-0 shadow-[-10px_-10px_30px_rgba(0,0,0,0.5)] z-20">
+             
+             {/* Vox Link */}
+             <div className="hidden md:block">
+                 <VoiceControl 
+                    onTranscript={(text) => setUserPrompt(prev => {
+                        // Smart append: Add space if needed
+                        return prev + (prev.length > 0 && !prev.endsWith(' ') ? ' ' : '') + text;
+                    })}
+                    disabled={isProcessing}
+                    onStateChange={setIsVoiceActive}
+                 />
+             </div>
+
+             <div className={`flex-1 relative w-full h-24 md:h-auto group transition-all duration-300 ${isVoiceActive ? 'ring-1 ring-red-500/50 bg-red-950/10' : ''}`}>
                <textarea 
                  ref={textareaRef}
                  value={userPrompt}
                  onChange={(e) => setUserPrompt(e.target.value)}
                  onKeyDown={handleInputKeyDown}
                  placeholder={
+                    isVoiceActive ? "LISTENING TO AUDIO STREAM..." :
                     isProcessing ? "PROCESSING STREAM..." : 
                     chatHistory.length > 0 ? "ENTER FOLLOW-UP QUERY OR NEW TOPIC..." : 
                     "INPUT QUERY FOR VERIFICATION... (CTRL+UP for History)"
@@ -183,8 +203,20 @@ const App: React.FC = () => {
                  disabled={isProcessing}
                  className="w-full h-full bg-zinc-900/50 border border-zinc-800 text-veritas-cyan font-mono text-sm p-3 focus:outline-none focus:border-veritas-cyan/50 resize-none placeholder:text-zinc-700 disabled:opacity-50 transition-colors"
                />
-               <div className="absolute top-0 right-0 p-1 pointer-events-none">
-                 <div className="w-2 h-2 border border-zinc-600 group-focus-within:border-veritas-cyan transition-colors"></div>
+               
+               {/* Mobile Vox Button (Absolute) */}
+               <div className="md:hidden absolute bottom-2 right-2 z-30">
+                 <div className="scale-75 origin-bottom-right">
+                    <VoiceControl 
+                        onTranscript={(text) => setUserPrompt(prev => prev + ' ' + text)}
+                        disabled={isProcessing}
+                        onStateChange={setIsVoiceActive}
+                    />
+                 </div>
+               </div>
+
+               <div className="absolute top-0 right-0 p-1 pointer-events-none hidden md:block">
+                 <div className={`w-2 h-2 border transition-colors ${isVoiceActive ? 'border-red-500 bg-red-500 animate-pulse' : 'border-zinc-600 group-focus-within:border-veritas-cyan'}`}></div>
                </div>
              </div>
              
