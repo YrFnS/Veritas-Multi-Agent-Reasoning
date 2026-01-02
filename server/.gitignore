@@ -1,0 +1,8 @@
+# Environment files
+.env
+
+# Session storage
+sessions/
+
+# Dependencies
+node_modules/

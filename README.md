@@ -28,22 +28,58 @@ Veritas moves beyond simple "chatbot" interactions by implementing a rigorous de
 *   **AI Engine**: `@google/genai` SDK
     *   Reasoning: `gemini-3-pro-preview`
     *   TTS: `gemini-2.5-flash-preview-tts`
+*   **Backend**: Express.js (OAuth proxy server)
 *   **State**: Custom React Hooks (`useReasoningEngine`, `useCommandTerminal`)
+
+## 🔐 Authentication Options
+
+Veritas supports two authentication methods:
+
+| Method | Description | Best For |
+|--------|-------------|----------|
+| **Google OAuth** | Sign in with Google to use Gemini Code Assist subscription | Production use, no API costs |
+| **Manual API Key** | Direct Gemini API key input | Development/testing |
 
 ## 🚀 Getting Started
 
-1.  **Environment Setup**:
-    Ensure your `process.env.API_KEY` is set with a valid Google Cloud Project API key that has access to Gemini 3 models.
+### Option A: Google OAuth (Recommended)
 
-2.  **Run the Application**:
-    The application is built as a standard React app.
+1.  **Setup OAuth Credentials**:
+    - Go to [Google Cloud Console → APIs & Credentials](https://console.cloud.google.com/apis/credentials)
+    - Create OAuth 2.0 Client ID (Web application)
+    - Add redirect URI: `http://localhost:3001/auth/google/callback`
+
+2.  **Configure Backend**:
     ```bash
-    npm install
-    npm start
+    cd server
+    cp .env.example .env
+    # Edit .env with your OAuth credentials
     ```
 
-3.  **Configuration**:
-    Click the `CFG` button in the header to open the System Configuration Editor. You can modify agent personas, debate rules, or create entirely new agent swarms.
+3.  **Run Both Servers**:
+    ```bash
+    # Terminal 1 - Backend
+    cd server && npm install && npm run dev
+    
+    # Terminal 2 - Frontend
+    npm install && npm run dev
+    ```
+
+4.  **Authenticate**: Click the auth badge → Select "GOOGLE OAUTH" → Sign in
+
+### Option B: Manual API Key
+
+1.  **Run Frontend Only**:
+    ```bash
+    npm install
+    npm run dev
+    ```
+
+2.  **Authenticate**: Click the auth badge → Enter your Gemini API key
+
+## ⚙️ Configuration
+
+Click the `CFG` button in the header to open the System Configuration Editor. You can modify agent personas, debate rules, or create entirely new agent swarms.
 
 ## 📂 Project Structure
 
