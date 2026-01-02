@@ -17,8 +17,8 @@ const REASONING_MODEL = 'gemini-3-pro-preview';
 export class MultiAgentService {
   private core: GeminiCore;
 
-  constructor(apiKey: string | null, useOAuth: boolean = false) {
-    this.core = new GeminiCore(apiKey, useOAuth);
+  constructor(apiKey: string) {
+    this.core = new GeminiCore(apiKey);
   }
 
   // --- PUBLIC API ---
@@ -33,9 +33,9 @@ export class MultiAgentService {
     chatHistory: ChatHistoryItem[],
     onLog: (log: LogEntry) => void
   ): Promise<string> {
-
+    
     if (!config.workflow || config.workflow.length === 0) {
-      throw new Error("Workflow mode activated but no steps defined.");
+        throw new Error("Workflow mode activated but no steps defined.");
     }
 
     const runningHistory = this.buildContextHistory(chatHistory) + `INITIAL USER REQUEST: "${userPrompt}"\n\n=== WORKFLOW START ===\n`;
@@ -43,15 +43,15 @@ export class MultiAgentService {
     let lastOutput = "";
 
     for (const step of config.workflow) {
-      const agentConfig = config.agents.find(a => a.name === step.agentName);
-      if (!agentConfig) {
-        onLog(this.createLog('system', 'SYSTEM', `ERROR: Agent '${step.agentName}' not found. Skipping.`, false));
-        continue;
-      }
+        const agentConfig = config.agents.find(a => a.name === step.agentName);
+        if (!agentConfig) {
+            onLog(this.createLog('system', 'SYSTEM', `ERROR: Agent '${step.agentName}' not found. Skipping.`, false));
+            continue;
+        }
 
-      onLog(this.createLog(agentConfig.role, agentConfig.name, `Initializing Step: ${step.name}...`, true));
+        onLog(this.createLog(agentConfig.role, agentConfig.name, `Initializing Step: ${step.name}...`, true));
 
-      const stepPrompt = `
+        const stepPrompt = `
           CURRENT WORKFLOW STATE:
           ${currentContext}
 
@@ -64,19 +64,19 @@ export class MultiAgentService {
           3. Output JSON with 'thought_process' and 'output'.
         `;
 
-      const { data, sources } = await this.core.generateJSON(
-        REASONING_MODEL,
-        generateSystemInstruction(agentConfig, config),
-        stepPrompt,
-        GENERIC_STEP_SCHEMA,
-        true,
-        { ...agentConfig, temperature: step.temperature ?? agentConfig.temperature }
-      );
+        const { data, sources } = await this.core.generateJSON(
+            REASONING_MODEL,
+            generateSystemInstruction(agentConfig, config),
+            stepPrompt,
+            GENERIC_STEP_SCHEMA,
+            true,
+            { ...agentConfig, temperature: step.temperature ?? agentConfig.temperature }
+        );
 
-      lastOutput = data.output;
-      currentContext += `\n[STEP: ${step.name} | AGENT: ${agentConfig.name}]:\n${lastOutput}\n`;
+        lastOutput = data.output;
+        currentContext += `\n[STEP: ${step.name} | AGENT: ${agentConfig.name}]:\n${lastOutput}\n`;
 
-      onLog(this.createLog(agentConfig.role, agentConfig.name, lastOutput, false, data, sources));
+        onLog(this.createLog(agentConfig.role, agentConfig.name, lastOutput, false, data, sources));
     }
 
     return lastOutput;
@@ -101,7 +101,7 @@ export class MultiAgentService {
 
     // --- ANALYST (Round 0) ---
     onLog(this.createLog('analyst', analyst.name, "Initializing deep scan...", true));
-
+    
     const analystRes = await this.core.generateJSON(
       REASONING_MODEL,
       generateSystemInstruction(analyst, config),
@@ -113,7 +113,7 @@ export class MultiAgentService {
 
     currentDraft = analystRes.data.factual_answer;
     history += `\n[${analyst.name}]: ${currentDraft}\n(Confidence: ${analystRes.data.confidence}%)\n`;
-
+    
     onLog(this.createLog('analyst', analyst.name, currentDraft, false, analystRes.data, analystRes.sources));
 
     // --- DEBATE LOOP ---
@@ -123,7 +123,7 @@ export class MultiAgentService {
 
       // SKEPTIC
       onLog(this.createLog('skeptic', skeptic.name, `Running integrity check (Cycle ${i})...`, true));
-
+      
       const skepticRes = await this.core.generateJSON(
         REASONING_MODEL,
         generateSystemInstruction(skeptic, config),
@@ -145,7 +145,7 @@ export class MultiAgentService {
 
       // ANALYST REBUTTAL
       onLog(this.createLog('analyst', analyst.name, "Processing critique & refining...", true));
-
+      
       const rebuttalRes = await this.core.generateJSON(
         REASONING_MODEL,
         generateSystemInstruction(analyst, config),
@@ -162,7 +162,7 @@ export class MultiAgentService {
 
     // --- JUDGE ---
     onLog(this.createLog('judge', judge.name, "Compiling final verdict...", true));
-
+    
     const judgeRes = await this.core.generateJSON(
       REASONING_MODEL,
       generateSystemInstruction(judge, config),
@@ -224,17 +224,17 @@ export class MultiAgentService {
 
   private buildContextHistory(chatHistory: ChatHistoryItem[]): string {
     if (chatHistory.length === 0) return "";
-    return "PREVIOUS CONVERSATION HISTORY:\n" + chatHistory.map(turn =>
-      `${turn.role === 'user' ? 'USER' : 'SYSTEM'}: ${turn.content}`
+    return "PREVIOUS CONVERSATION HISTORY:\n" + chatHistory.map(turn => 
+        `${turn.role === 'user' ? 'USER' : 'SYSTEM'}: ${turn.content}`
     ).join("\n") + "\n\n";
   }
 
   private createLog(
-    role: any,
-    name: string,
-    content: string,
-    isThinking: boolean,
-    metadata?: any,
+    role: any, 
+    name: string, 
+    content: string, 
+    isThinking: boolean, 
+    metadata?: any, 
     sources?: any[]
   ): LogEntry {
     return {

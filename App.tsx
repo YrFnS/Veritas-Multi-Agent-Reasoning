@@ -12,7 +12,6 @@ import { useCommandTerminal } from './features/reasoning/hooks/useCommandTermina
 import { Tooltip } from './components/Tooltip';
 
 const CONFIG_STORAGE_KEY = 'veritas_system_config';
-const API_KEY_STORAGE_KEY = 'veritas_user_api_key';
 
 const App: React.FC = () => {
   // --- STATE MANAGEMENT ---
@@ -20,15 +19,6 @@ const App: React.FC = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [activePreset, setActivePreset] = useState<string>('DEFAULT');
   const [isEditingConfig, setIsEditingConfig] = useState(false);
-  
-  // Auth State
-  const [manualApiKey, setManualApiKey] = useState<string | null>(() => {
-    try {
-      return localStorage.getItem(API_KEY_STORAGE_KEY);
-    } catch {
-      return null;
-    }
-  });
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -44,9 +34,7 @@ const App: React.FC = () => {
 
   // --- HOOKS ---
   const { playBlip, playClick, playActivate, playDataStream, playVerdict, playError, isMuted, toggleMute } = useSoundFX();
-  
-  // Pass the manual key (or null) to the engine
-  const { logs, processState, activeAgentName, currentRound, chatHistory, startReasoning, clearMemory } = useReasoningEngine(config, manualApiKey);
+  const { logs, processState, activeAgentName, currentRound, chatHistory, startReasoning, clearMemory } = useReasoningEngine(config);
   
   const isProcessing = processState !== ProcessState.IDLE && processState !== ProcessState.COMPLETE && processState !== ProcessState.ERROR;
 
@@ -103,15 +91,6 @@ const App: React.FC = () => {
     playVerdict();
   };
 
-  const handleSetManualKey = (key: string | null) => {
-    setManualApiKey(key);
-    if (key) {
-      localStorage.setItem(API_KEY_STORAGE_KEY, key);
-    } else {
-      localStorage.removeItem(API_KEY_STORAGE_KEY);
-    }
-  };
-
   const handlePresetChange = (key: string) => {
       playClick();
       setActivePreset(key);
@@ -165,8 +144,6 @@ const App: React.FC = () => {
         onReset={handleReset}
         onConfigOpen={() => { playClick(); setIsEditingConfig(true); }}
         playVerdict={playVerdict}
-        manualApiKey={manualApiKey}
-        onSetManualKey={handleSetManualKey}
       />
 
       <main className="flex-1 flex overflow-hidden relative">
