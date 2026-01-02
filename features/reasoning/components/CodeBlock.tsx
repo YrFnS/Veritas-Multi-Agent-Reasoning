@@ -1,10 +1,12 @@
-import React from 'react';
+import React, { useState } from 'react';
 
 interface CodeBlockProps {
   code: string;
 }
 
 export const CodeBlock: React.FC<CodeBlockProps> = ({ code }) => {
+  const [copied, setCopied] = useState(false);
+
   // Regex patterns for syntax highlighting
   const patterns = {
     keyword: /\b(const|let|var|function|return|if|else|for|while|import|export|from|class|interface|type|async|await)\b/g,
@@ -32,14 +34,28 @@ export const CodeBlock: React.FC<CodeBlockProps> = ({ code }) => {
     return output;
   };
 
+  const handleCopy = () => {
+    navigator.clipboard.writeText(code);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
   return (
-      <div className="my-3 bg-zinc-950 border border-zinc-800 rounded p-3 overflow-x-auto relative group">
-        <div className="absolute top-0 right-0 px-2 py-0.5 text-[9px] text-zinc-600 font-mono border-b border-l border-zinc-800 rounded-bl bg-zinc-900 opacity-50 group-hover:opacity-100 transition-opacity">
-            CODE_FRAGMENT
+      <div className="my-3 bg-zinc-950 border border-zinc-800 rounded p-3 relative group">
+        <div className="flex justify-between items-center mb-2 border-b border-zinc-900 pb-2">
+            <span className="text-[9px] text-zinc-600 font-mono">SOURCE_FRAGMENT</span>
+            <button 
+                onClick={handleCopy}
+                className="text-[9px] font-mono border border-zinc-800 hover:border-veritas-cyan hover:text-veritas-cyan px-2 py-0.5 rounded transition-all"
+            >
+                {copied ? 'COPIED_TO_CLIPBOARD' : 'COPY'}
+            </button>
         </div>
-        <pre className="text-[11px] font-mono leading-relaxed whitespace-pre">
-            <code className="text-zinc-300" dangerouslySetInnerHTML={{ __html: highlightCode(code) }} />
-        </pre>
+        <div className="overflow-x-auto">
+            <pre className="text-[11px] font-mono leading-relaxed whitespace-pre">
+                <code className="text-zinc-300" dangerouslySetInnerHTML={{ __html: highlightCode(code) }} />
+            </pre>
+        </div>
       </div>
   );
 };

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useSoundFX } from '../features/reasoning/hooks/useSoundFX';
 
 interface TerminalTextProps {
   text: string;
@@ -20,6 +21,7 @@ export const TerminalText: React.FC<TerminalTextProps> = ({
   const [displayedText, setDisplayedText] = useState('');
   const [isComplete, setIsComplete] = useState(false);
   const iterationRef = useRef(0);
+  const { playKeystroke } = useSoundFX();
 
   useEffect(() => {
     // Reset state when text changes
@@ -52,16 +54,19 @@ export const TerminalText: React.FC<TerminalTextProps> = ({
         }, 30);
     } else {
         // Standard Typewriter optimized for long text
-        // If text is very long, speed it up considerably
         const effectiveSpeed = text.length > 200 ? 1 : speed;
-        const step = text.length > 500 ? 5 : 1; // Batch characters for very long text
+        const step = text.length > 500 ? 5 : 1; 
 
         let i = 0;
         interval = setInterval(() => {
             setDisplayedText(text.slice(0, i + step));
+            
+            // Audio Feedback - trigger only occasionally to avoid spamming
+            if (i % 3 === 0) playKeystroke();
+            
             i += step;
             if (i >= text.length) {
-                setDisplayedText(text); // Ensure final text is exact
+                setDisplayedText(text); 
                 clearInterval(interval);
                 setIsComplete(true);
                 if (onComplete) onComplete();
@@ -70,7 +75,7 @@ export const TerminalText: React.FC<TerminalTextProps> = ({
     }
 
     return () => clearInterval(interval);
-  }, [text, speed, scramble, onComplete]);
+  }, [text, speed, scramble, onComplete, playKeystroke]);
 
   return <span className={className}>{displayedText}{!isComplete && <span className="animate-pulse">_</span>}</span>;
 };

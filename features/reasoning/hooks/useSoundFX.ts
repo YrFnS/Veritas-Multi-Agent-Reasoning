@@ -1,8 +1,10 @@
-import { useCallback, useRef, useState, useEffect } from 'react';
+import { useCallback, useState, useEffect } from 'react';
+
+// GLOBAL SINGLETONS to prevent AudioContext stacking
+let globalAudioContext: AudioContext | null = null;
+let globalGainNode: GainNode | null = null;
 
 export const useSoundFX = () => {
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const gainNodeRef = useRef<GainNode | null>(null);
   // Persist mute state
   const [isMuted, setIsMuted] = useState(() => {
     try {
@@ -21,25 +23,25 @@ export const useSoundFX = () => {
   }, []);
 
   const initAudio = useCallback(() => {
-    if (!audioContextRef.current) {
+    if (!globalAudioContext) {
       const AudioContextClass = (window.AudioContext || (window as any).webkitAudioContext);
-      audioContextRef.current = new AudioContextClass();
-      gainNodeRef.current = audioContextRef.current.createGain();
-      gainNodeRef.current.connect(audioContextRef.current.destination);
+      globalAudioContext = new AudioContextClass();
+      globalGainNode = globalAudioContext.createGain();
+      globalGainNode.connect(globalAudioContext.destination);
     }
-    if (audioContextRef.current.state === 'suspended') {
-      audioContextRef.current.resume();
+    if (globalAudioContext.state === 'suspended') {
+      globalAudioContext.resume();
     }
     // Update gain based on mute state
-    if (gainNodeRef.current) {
-      gainNodeRef.current.gain.value = isMuted ? 0 : 0.1;
+    if (globalGainNode) {
+      globalGainNode.gain.value = isMuted ? 0 : 0.1;
     }
   }, [isMuted]);
 
   // Sync gain with mute state changes
   useEffect(() => {
-    if (gainNodeRef.current) {
-      gainNodeRef.current.gain.value = isMuted ? 0 : 0.1;
+    if (globalGainNode) {
+      globalGainNode.gain.value = isMuted ? 0 : 0.1;
     }
   }, [isMuted]);
 
@@ -50,22 +52,22 @@ export const useSoundFX = () => {
     startTime: number = 0,
     vol: number = 0.1
   ) => {
-    if (isMuted || !audioContextRef.current || !gainNodeRef.current) return;
+    if (isMuted || !globalAudioContext || !globalGainNode) return;
     
-    const osc = audioContextRef.current.createOscillator();
-    const gain = audioContextRef.current.createGain();
+    const osc = globalAudioContext.createOscillator();
+    const gain = globalAudioContext.createGain();
     
     osc.type = type;
-    osc.frequency.setValueAtTime(freq, audioContextRef.current.currentTime + startTime);
+    osc.frequency.setValueAtTime(freq, globalAudioContext.currentTime + startTime);
     
-    gain.gain.setValueAtTime(vol, audioContextRef.current.currentTime + startTime);
-    gain.gain.exponentialRampToValueAtTime(0.01, audioContextRef.current.currentTime + startTime + duration);
+    gain.gain.setValueAtTime(vol, globalAudioContext.currentTime + startTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, globalAudioContext.currentTime + startTime + duration);
     
     osc.connect(gain);
-    gain.connect(gainNodeRef.current);
+    gain.connect(globalGainNode);
     
-    osc.start(audioContextRef.current.currentTime + startTime);
-    osc.stop(audioContextRef.current.currentTime + startTime + duration);
+    osc.start(globalAudioContext.currentTime + startTime);
+    osc.stop(globalAudioContext.currentTime + startTime + duration);
   };
 
   const playBlip = useCallback(() => {
@@ -78,6 +80,30 @@ export const useSoundFX = () => {
     playOscillator(800, 'square', 0.01, 0, 0.05);
   }, [initAudio, isMuted]);
 
+  const playKeystroke = useCallback(() => {
+    // High-tech mechanical click
+    if (isMuted || !globalAudioContext || !globalGainNode) return;
+    // Don't init here to avoid lag on every char, assume initAudio called by parent
+    
+    // Simple noise burst simulation using high freq square
+    const osc = globalAudioContext.createOscillator();
+    const gain = globalAudioContext.createGain();
+    
+    // Randomize pitch slightly for organic feel
+    osc.frequency.value = 800 + Math.random() * 200; 
+    osc.type = 'square';
+    
+    // Very short duration
+    gain.gain.setValueAtTime(0.02, globalAudioContext.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, globalAudioContext.currentTime + 0.03);
+    
+    osc.connect(gain);
+    gain.connect(globalGainNode);
+    
+    osc.start();
+    osc.stop(globalAudioContext.currentTime + 0.03);
+  }, [isMuted]);
+
   const playActivate = useCallback(() => {
     initAudio();
     playOscillator(220, 'sawtooth', 0.3, 0, 0.05);
@@ -87,7 +113,6 @@ export const useSoundFX = () => {
 
   const playDataStream = useCallback(() => {
     initAudio();
-    // Random data noise
     for(let i=0; i<5; i++) {
         playOscillator(1000 + Math.random() * 2000, 'square', 0.02, i * 0.03, 0.02);
     }
@@ -113,6 +138,7 @@ export const useSoundFX = () => {
     toggleMute,
     playBlip,
     playClick,
+    playKeystroke,
     playActivate,
     playDataStream,
     playVerdict,

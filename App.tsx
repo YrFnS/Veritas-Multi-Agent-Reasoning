@@ -85,6 +85,18 @@ const App: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [clearMemory, playClick]);
 
+  // --- AMBIENT LIGHTING SYSTEM ---
+  const getAmbientClasses = () => {
+    switch (processState) {
+      case ProcessState.AUDITING: return 'shadow-[inset_0_0_150px_rgba(220,38,38,0.2)] border-veritas-red/20'; // Red
+      case ProcessState.JUDGING: return 'shadow-[inset_0_0_150px_rgba(255,204,0,0.15)] border-veritas-gold/20'; // Gold
+      case ProcessState.ERROR: return 'shadow-[inset_0_0_150px_rgba(220,38,38,0.4)] border-red-500 animate-pulse'; // Red Alarm
+      case ProcessState.ANALYZING: return 'shadow-[inset_0_0_150px_rgba(0,240,255,0.1)] border-veritas-cyan/10'; // Cyan
+      case ProcessState.INTERROGATION: return 'shadow-[inset_0_0_150px_rgba(249,115,22,0.15)] border-orange-500/20'; // Orange
+      default: return 'shadow-[inset_0_0_150px_rgba(0,0,0,0.5)] border-transparent'; // Dark
+    }
+  };
+
   // --- HANDLERS ---
   const handleSaveConfig = (newConfig: SystemConfig) => {
     setConfig(newConfig);
@@ -129,8 +141,11 @@ const App: React.FC = () => {
   }
 
   return (
-    <div className="h-screen w-screen bg-veritas-black text-white font-sans selection:bg-veritas-cyan selection:text-black flex flex-col overflow-hidden crt-flicker">
+    <div className="h-screen w-screen bg-veritas-black text-white font-sans selection:bg-veritas-cyan selection:text-black flex flex-col overflow-hidden crt-flicker relative">
       
+      {/* AMBIENT LIGHTING OVERLAY */}
+      <div className={`absolute inset-0 pointer-events-none transition-all duration-1000 border-[20px] z-50 ${getAmbientClasses()}`}></div>
+
       <VeritasHeader 
         isSidebarOpen={isSidebarOpen}
         setIsSidebarOpen={setIsSidebarOpen}
