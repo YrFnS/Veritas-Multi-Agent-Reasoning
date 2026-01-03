@@ -1,17 +1,17 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { ReasoningLog } from './features/reasoning/components/ReasoningLog';
 import { ConfigEditor } from './features/reasoning/components/ConfigEditor';
-import { VeritasHeader } from './features/reasoning/components/VeritasHeader';
-import { VeritasSidebar } from './features/reasoning/components/VeritasSidebar';
 import { VoiceControl } from './features/reasoning/components/VoiceControl';
+import { VeritasShell } from './features/reasoning/components/VeritasShell';
 import { BootSequence } from './components/BootSequence';
-import { NeuralBackground } from './components/NeuralBackground';
+import { Tooltip } from './components/Tooltip';
+import { logSystemEvent } from './components/SystemMonitor'; // Import Helper
 import { DEFAULT_CONFIG, PRESETS } from './features/reasoning/constants';
 import { SystemConfig, ProcessState } from './features/reasoning/types';
 import { useReasoningEngine } from './features/reasoning/hooks/useReasoningEngine';
 import { useSoundFX } from './features/reasoning/hooks/useSoundFX';
 import { useCommandTerminal } from './features/reasoning/hooks/useCommandTerminal';
-import { Tooltip } from './components/Tooltip';
 
 const CONFIG_STORAGE_KEY = 'veritas_system_config';
 
@@ -36,8 +36,8 @@ const App: React.FC = () => {
   });
 
   // --- HOOKS ---
-  const { playBlip, playClick, playActivate, playDataStream, playVerdict, playError, isMuted, toggleMute } = useSoundFX();
-  const { logs, processState, activeAgentName, currentRound, chatHistory, startReasoning, clearMemory } = useReasoningEngine(config);
+  const { playBlip, playClick, playKeystroke, playActivate, playDataStream, playVerdict, playError, isMuted, toggleMute } = useSoundFX();
+  const { logs, processState, activeAgentName, currentRound, chatHistory, startReasoning, stopReasoning, clearMemory } = useReasoningEngine(config);
   
   const isProcessing = processState !== ProcessState.IDLE && processState !== ProcessState.COMPLETE && processState !== ProcessState.ERROR;
 
@@ -46,6 +46,7 @@ const App: React.FC = () => {
     (prompt) => {
       playActivate();
       startReasoning(prompt);
+      logSystemEvent("EXEC_SEQUENCE_INIT");
       setIsSidebarOpen(false);
     }
   );
@@ -54,10 +55,11 @@ const App: React.FC = () => {
   // Audio Triggers based on State
   useEffect(() => {
     if (isBooting) return;
-    if (processState === ProcessState.ANALYZING) playActivate();
-    if (processState === ProcessState.AUDITING) playDataStream();
-    if (processState === ProcessState.COMPLETE) playVerdict();
-    if (processState === ProcessState.ERROR) playError();
+    if (processState === ProcessState.ANALYZING) { playActivate(); logSystemEvent("STATE: ANALYZING"); }
+    if (processState === ProcessState.AUDITING) { playDataStream(); logSystemEvent("STATE: AUDITING"); }
+    if (processState === ProcessState.JUDGING) logSystemEvent("STATE: JUDICIAL_REVIEW");
+    if (processState === ProcessState.COMPLETE) { playVerdict(); logSystemEvent("PROCESS_COMPLETE"); }
+    if (processState === ProcessState.ERROR) { playError(); logSystemEvent("CRITICAL_ERROR"); }
   }, [processState, playActivate, playDataStream, playVerdict, playError, isBooting]);
 
   // Audio Trigger on new logs
@@ -85,24 +87,13 @@ const App: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [clearMemory, playClick]);
 
-  // --- AMBIENT LIGHTING SYSTEM ---
-  const getAmbientClasses = () => {
-    switch (processState) {
-      case ProcessState.AUDITING: return 'shadow-[inset_0_0_150px_rgba(220,38,38,0.2)] border-veritas-red/20'; // Red
-      case ProcessState.JUDGING: return 'shadow-[inset_0_0_150px_rgba(255,204,0,0.15)] border-veritas-gold/20'; // Gold
-      case ProcessState.ERROR: return 'shadow-[inset_0_0_150px_rgba(220,38,38,0.4)] border-red-500 animate-pulse'; // Red Alarm
-      case ProcessState.ANALYZING: return 'shadow-[inset_0_0_150px_rgba(0,240,255,0.1)] border-veritas-cyan/10'; // Cyan
-      case ProcessState.INTERROGATION: return 'shadow-[inset_0_0_150px_rgba(249,115,22,0.15)] border-orange-500/20'; // Orange
-      default: return 'shadow-[inset_0_0_150px_rgba(0,0,0,0.5)] border-transparent'; // Dark
-    }
-  };
-
   // --- HANDLERS ---
   const handleSaveConfig = (newConfig: SystemConfig) => {
     setConfig(newConfig);
     localStorage.setItem(CONFIG_STORAGE_KEY, JSON.stringify(newConfig));
     setIsEditingConfig(false);
     setActivePreset('CUSTOM');
+    logSystemEvent("CONFIG_UPDATED");
     playVerdict();
   };
 
@@ -110,6 +101,7 @@ const App: React.FC = () => {
       playClick();
       setActivePreset(key);
       setConfig(PRESETS[key]);
+      logSystemEvent(`PRESET_LOADED: ${key}`);
   };
 
   const handleExport = () => {
@@ -122,11 +114,13 @@ const App: React.FC = () => {
     link.download = `veritas_transcript_${Date.now()}.json`;
     link.click();
     URL.revokeObjectURL(url);
+    logSystemEvent("EXPORT_SUCCESS");
   };
 
   const handleReset = () => {
     playClick();
     clearMemory();
+    logSystemEvent("MEMORY_PURGED");
   }
 
   const handleInterrogate = (agentName: string) => {
@@ -135,55 +129,44 @@ const App: React.FC = () => {
       if (textareaRef.current) textareaRef.current.focus();
       setIsSidebarOpen(false);
   };
+  
+  const handleToggleMute = () => {
+      toggleMute();
+      logSystemEvent(isMuted ? "AUDIO_UPLINK: RESTORED" : "AUDIO_UPLINK: DISABLED");
+  };
+
+  const handleStop = () => {
+      playError(); // Use error sound as a "cancel" sound
+      stopReasoning();
+      logSystemEvent("PROCESS_TERMINATED_MANUALLY");
+  };
 
   if (isBooting) {
     return <BootSequence onComplete={() => setIsBooting(false)} />;
   }
 
   return (
-    <div className="h-screen w-screen bg-veritas-black text-white font-sans selection:bg-veritas-cyan selection:text-black flex flex-col overflow-hidden crt-flicker relative">
-      
-      {/* AMBIENT LIGHTING OVERLAY */}
-      <div className={`absolute inset-0 pointer-events-none transition-all duration-1000 border-[20px] z-50 ${getAmbientClasses()}`}></div>
-
-      <VeritasHeader 
+    <>
+      <VeritasShell
+        processState={processState}
         isSidebarOpen={isSidebarOpen}
         setIsSidebarOpen={setIsSidebarOpen}
-        isProcessing={isProcessing}
-        processState={processState}
-        currentRound={currentRound}
-        maxRounds={config.max_rounds}
+        config={config}
+        activeAgentName={activeAgentName}
         activePreset={activePreset}
-        presets={PRESETS}
         isMuted={isMuted}
-        toggleMute={toggleMute}
+        isProcessing={isProcessing}
+        currentRound={currentRound}
+        presets={PRESETS}
         onPresetChange={handlePresetChange}
+        onInterrogate={handleInterrogate}
         onExport={handleExport}
         onReset={handleReset}
         onConfigOpen={() => { playClick(); setIsEditingConfig(true); }}
         playVerdict={playVerdict}
-      />
-
-      <main className="flex-1 flex overflow-hidden relative">
-        <NeuralBackground />
-        
-        {/* Subtle grid overlay remains for texture, but clearer */}
-        <div className="absolute inset-0 bg-grid-pattern opacity-5 pointer-events-none"></div>
-
-        <VeritasSidebar 
-          isOpen={isSidebarOpen}
-          setIsOpen={setIsSidebarOpen}
-          config={config}
-          processState={processState}
-          activeAgentName={activeAgentName}
-          activePreset={activePreset}
-          presets={PRESETS}
-          onPresetChange={handlePresetChange}
-          onInterrogate={handleInterrogate}
-        />
-
-        {/* CENTER DASHBOARD */}
-        <section className="flex-1 flex flex-col min-w-0 bg-black/10 relative z-10 backdrop-blur-[1px]">
+        toggleMute={handleToggleMute}
+      >
+          {/* LOG DISPLAY AREA */}
           <div className="flex-1 relative border-b border-zinc-800 overflow-hidden flex flex-col">
              <ReasoningLog logs={logs} agents={config.agents} />
           </div>
@@ -195,11 +178,10 @@ const App: React.FC = () => {
              <div className="hidden md:block">
                  <VoiceControl 
                     onTranscript={(text) => setUserPrompt(prev => {
-                        // Smart append: Add space if needed
                         return prev + (prev.length > 0 && !prev.endsWith(' ') ? ' ' : '') + text;
                     })}
                     disabled={isProcessing}
-                    onStateChange={setIsVoiceActive}
+                    onStateChange={(active) => { setIsVoiceActive(active); if(active) logSystemEvent("VOX_CHANNEL_OPEN"); }}
                  />
              </div>
 
@@ -207,8 +189,14 @@ const App: React.FC = () => {
                <textarea 
                  ref={textareaRef}
                  value={userPrompt}
-                 onChange={(e) => setUserPrompt(e.target.value)}
-                 onKeyDown={handleInputKeyDown}
+                 onChange={(e) => {
+                    setUserPrompt(e.target.value);
+                    if (Math.random() > 0.3) playKeystroke();
+                 }}
+                 onKeyDown={(e) => {
+                    handleInputKeyDown(e);
+                    if (e.key === 'Enter') playClick();
+                 }}
                  placeholder={
                     isVoiceActive ? "LISTENING TO AUDIO STREAM..." :
                     isProcessing ? "PROCESSING STREAM..." : 
@@ -219,13 +207,13 @@ const App: React.FC = () => {
                  className="w-full h-full bg-zinc-900/50 border border-zinc-800 text-veritas-cyan font-mono text-sm p-3 focus:outline-none focus:border-veritas-cyan/50 resize-none placeholder:text-zinc-700 disabled:opacity-50 transition-colors"
                />
                
-               {/* Mobile Vox Button (Absolute) */}
+               {/* Mobile Vox Button */}
                <div className="md:hidden absolute bottom-2 right-2 z-30">
                  <div className="scale-75 origin-bottom-right">
                     <VoiceControl 
                         onTranscript={(text) => setUserPrompt(prev => prev + ' ' + text)}
                         disabled={isProcessing}
-                        onStateChange={setIsVoiceActive}
+                        onStateChange={(active) => setIsVoiceActive(active)}
                     />
                  </div>
                </div>
@@ -236,15 +224,26 @@ const App: React.FC = () => {
              </div>
              
              <div className="flex flex-col gap-2 w-full md:w-auto">
-                 <Tooltip content="Initiate Multi-Agent Reasoning Chain (Enter)" position="left">
-                    <button
-                        onClick={handleExecute}
-                        disabled={isProcessing || !userPrompt.trim()}
-                        className="w-full h-12 md:h-16 px-8 bg-veritas-cyan/10 border border-veritas-cyan text-veritas-cyan font-mono font-bold tracking-wider hover:bg-veritas-cyan hover:text-black transition-all disabled:opacity-30 disabled:cursor-not-allowed"
-                    >
-                        {isProcessing ? 'PROCESSING' : 'EXECUTE'}
-                    </button>
-                 </Tooltip>
+                 {isProcessing ? (
+                     <Tooltip content="Abort Reasoning Sequence (Emergency Stop)" position="left">
+                        <button
+                            onClick={handleStop}
+                            className="w-full h-12 md:h-16 px-8 bg-red-950/30 border border-red-500 text-red-500 font-mono font-bold tracking-wider hover:bg-red-500 hover:text-black transition-all animate-pulse"
+                        >
+                            TERMINATE
+                        </button>
+                    </Tooltip>
+                 ) : (
+                    <Tooltip content="Initiate Multi-Agent Reasoning Chain (Enter)" position="left">
+                        <button
+                            onClick={handleExecute}
+                            disabled={!userPrompt.trim()}
+                            className="w-full h-12 md:h-16 px-8 bg-veritas-cyan/10 border border-veritas-cyan text-veritas-cyan font-mono font-bold tracking-wider hover:bg-veritas-cyan hover:text-black transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                        >
+                            EXECUTE
+                        </button>
+                    </Tooltip>
+                 )}
 
                  {chatHistory.length > 0 && !isProcessing && (
                    <Tooltip content="Clear Context Memory & Logs (Ctrl+K)" position="left">
@@ -258,14 +257,13 @@ const App: React.FC = () => {
                  )}
              </div>
           </div>
-        </section>
-      </main>
+      </VeritasShell>
 
       {/* MODAL */}
       {isEditingConfig && (
         <ConfigEditor config={config} onSave={handleSaveConfig} onClose={() => setIsEditingConfig(false)} />
       )}
-    </div>
+    </>
   );
 };
 

@@ -1,3 +1,4 @@
+
 import { GoogleGenAI, Schema, Modality } from "@google/genai";
 import { AgentConfig } from "../types";
 
@@ -33,13 +34,17 @@ export class GeminiCore {
 
     while (attempt <= MAX_RETRIES) {
       try {
+        // Default thinking budget is 2048 if not specified.
+        // We do NOT set maxOutputTokens here to avoid choking the model if the thinking budget is high.
+        // The effective output limit is (Total - Thinking).
+        const thinkingBudget = configOverrides.thinkingBudget ?? 2048;
+
         const config: any = {
           systemInstruction: systemPrompt,
           responseMimeType: "application/json",
           responseSchema: schema,
           temperature: configOverrides.temperature ?? 0.1,
-          thinkingConfig: { thinkingBudget: 2048 },
-          maxOutputTokens: 8192,
+          thinkingConfig: { thinkingBudget },
         };
 
         if (configOverrides.topK) config.topK = configOverrides.topK;
@@ -105,11 +110,26 @@ export class GeminiCore {
 
   private cleanAndParseJSON(text: string): any {
     try {
-      const cleanText = text.replace(/```json\n?|```\n?/g, "").trim();
-      return JSON.parse(cleanText);
+      // 1. First attempt: Direct parse (fastest)
+      return JSON.parse(text);
     } catch (e) {
-      console.error("JSON Parse Error. Raw text:", text);
-      throw new Error("Failed to parse agent response. The agent may have deviated from the protocol.");
+      // 2. Second attempt: Remove markdown code blocks
+      try {
+        const cleanText = text.replace(/```json\n?|```\n?/g, "").trim();
+        return JSON.parse(cleanText);
+      } catch (e2) {
+        // 3. Third attempt: Robust extraction of the first JSON object
+        try {
+          const jsonMatch = text.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+             return JSON.parse(jsonMatch[0]);
+          }
+          throw new Error("No JSON object found in response");
+        } catch (e3) {
+           console.error("JSON Parse Error. Raw text:", text);
+           throw new Error("Failed to parse agent response. Protocol Deviation.");
+        }
+      }
     }
   }
 }

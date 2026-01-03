@@ -1,3 +1,4 @@
+
 import { useState, useCallback, useRef } from 'react';
 import { SystemConfig, LogEntry, ProcessState, ChatHistoryItem, AgentConfig } from '../types';
 import { MultiAgentService } from '../services/geminiService';
@@ -11,6 +12,8 @@ export const useReasoningEngine = (config: SystemConfig) => {
   const [finalResult, setFinalResult] = useState<string | null>(null);
   const [chatHistory, setChatHistory] = useState<ChatHistoryItem[]>([]);
   const [currentRound, setCurrentRound] = useState<number>(0);
+  
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   // Helper to add logs efficiently
   const addLog = useCallback((log: LogEntry) => {
@@ -55,7 +58,8 @@ export const useReasoningEngine = (config: SystemConfig) => {
   const handleWorkflow = async (
       service: MultiAgentService,
       userPrompt: string,
-      chatHistory: ChatHistoryItem[]
+      chatHistory: ChatHistoryItem[],
+      signal: AbortSignal
   ) => {
       setProcessState(ProcessState.WORKFLOW_RUNNING);
           
@@ -66,7 +70,8 @@ export const useReasoningEngine = (config: SystemConfig) => {
           (log) => {
               addWorkflowLog(log);
               if (log.isThinking) setActiveAgentName(log.agentName);
-          }
+          },
+          signal
       );
       
       setFinalResult(result);
@@ -92,7 +97,8 @@ export const useReasoningEngine = (config: SystemConfig) => {
   const handleStandardDebate = async (
       service: MultiAgentService,
       userPrompt: string,
-      chatHistory: ChatHistoryItem[]
+      chatHistory: ChatHistoryItem[],
+      signal: AbortSignal
   ) => {
       const result = await service.runReasoningChain(
         userPrompt, 
@@ -111,7 +117,8 @@ export const useReasoningEngine = (config: SystemConfig) => {
              if (stateMap[log.agentRole]) setProcessState(stateMap[log.agentRole]);
           }
         },
-        (round) => setCurrentRound(round)
+        (round) => setCurrentRound(round),
+        signal
       );
 
       setFinalResult(result);
@@ -142,6 +149,13 @@ export const useReasoningEngine = (config: SystemConfig) => {
       console.error("API Key missing");
       return;
     }
+
+    // Abort previous if exists (though UI prevents this, safe to check)
+    if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+    }
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
 
     setProcessState(ProcessState.ANALYZING);
     setFinalResult(null);
@@ -186,41 +200,65 @@ export const useReasoningEngine = (config: SystemConfig) => {
 
          if (targetAgent) {
              await handleInterrogation(service, targetAgent, query, chatHistory);
+             abortControllerRef.current = null;
              return;
          }
       }
 
       // 2. Custom Workflow Check
       if (config.workflow && config.workflow.length > 0) {
-          await handleWorkflow(service, userPrompt, chatHistory);
+          await handleWorkflow(service, userPrompt, chatHistory, controller.signal);
+          abortControllerRef.current = null;
           return;
       }
 
       // 3. Standard Debate
-      await handleStandardDebate(service, userPrompt, chatHistory);
+      await handleStandardDebate(service, userPrompt, chatHistory, controller.signal);
+      abortControllerRef.current = null;
 
-    } catch (e) {
-      console.error(e);
-      setProcessState(ProcessState.ERROR);
-      setActiveAgentName(null);
-      setLogs(prev => [...prev, {
-        id: 'ERR', 
-        agentRole: 'judge', 
-        agentName: 'SYSTEM', 
-        content: 'CRITICAL FAILURE: ' + (e as Error).message, 
-        timestamp: Date.now()
-      }]);
+    } catch (e: any) {
+      if (e.message === 'ABORT_SEQUENCE_RECEIVED') {
+          console.log("Process aborted by user");
+          setProcessState(ProcessState.ERROR);
+          setActiveAgentName(null);
+          setLogs(prev => [...prev, {
+            id: 'ABORT', 
+            agentRole: 'system', 
+            agentName: 'SYSTEM', 
+            content: 'PROCESS TERMINATED BY USER', 
+            timestamp: Date.now()
+          }]);
+      } else {
+          console.error(e);
+          setProcessState(ProcessState.ERROR);
+          setActiveAgentName(null);
+          setLogs(prev => [...prev, {
+            id: 'ERR', 
+            agentRole: 'judge', 
+            agentName: 'SYSTEM', 
+            content: 'CRITICAL FAILURE: ' + (e as Error).message, 
+            timestamp: Date.now()
+          }]);
+      }
     }
   }, [config, chatHistory, addLog, addWorkflowLog]);
 
+  const stopReasoning = useCallback(() => {
+      if (abortControllerRef.current) {
+          abortControllerRef.current.abort();
+          abortControllerRef.current = null;
+      }
+  }, []);
+
   const clearMemory = useCallback(() => {
+    stopReasoning();
     setChatHistory([]);
     setLogs([]);
     setFinalResult(null);
     setProcessState(ProcessState.IDLE);
     setCurrentRound(0);
     setActiveAgentName(null);
-  }, []);
+  }, [stopReasoning]);
 
   return {
     logs,
@@ -230,6 +268,7 @@ export const useReasoningEngine = (config: SystemConfig) => {
     chatHistory,
     currentRound,
     startReasoning,
+    stopReasoning,
     clearMemory
   };
 };

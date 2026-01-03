@@ -1,3 +1,4 @@
+
 export interface AgentConfig {
   role: string; // Changed from literal union to string to allow custom roles
   name: string;
@@ -9,6 +10,7 @@ export interface AgentConfig {
   temperature?: number;
   topK?: number;
   topP?: number;
+  thinkingBudget?: number; // Token budget for Gemini 3.0 "Thinking" process
 }
 
 export interface WorkflowStep {

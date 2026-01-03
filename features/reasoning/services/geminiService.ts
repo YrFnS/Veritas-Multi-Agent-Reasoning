@@ -1,3 +1,4 @@
+
 import { SystemConfig, LogEntry, AgentConfig, ChatHistoryItem } from "../types";
 import { generateSystemInstruction, ANALYST_PROMPT, SKEPTIC_PROMPT, JUDGE_PROMPT, VALIDATOR_PROMPT, META_INSPECTION_PROMPT } from "./prompts";
 import { ANALYST_SCHEMA, SKEPTIC_SCHEMA, JUDGE_SCHEMA, VALIDATOR_SCHEMA, GENERIC_STEP_SCHEMA, INSPECTION_SCHEMA } from "./schemas";
@@ -6,14 +7,6 @@ import { GeminiCore } from "./geminiCore";
 const uuid = () => Math.random().toString(36).substring(2, 9);
 const REASONING_MODEL = 'gemini-3-pro-preview';
 
-/**
- * MultiAgentService (Orchestrator)
- * Responsibilities:
- * 1. Managing the debate flow (Analyst -> Skeptic -> Judge)
- * 2. Managing Custom Workflows
- * 3. Constructing Prompts
- * 4. Structuring Logs
- */
 export class MultiAgentService {
   private core: GeminiCore;
 
@@ -31,7 +24,8 @@ export class MultiAgentService {
     userPrompt: string,
     config: SystemConfig,
     chatHistory: ChatHistoryItem[],
-    onLog: (log: LogEntry) => void
+    onLog: (log: LogEntry) => void,
+    signal?: AbortSignal
   ): Promise<string> {
     
     if (!config.workflow || config.workflow.length === 0) {
@@ -43,6 +37,8 @@ export class MultiAgentService {
     let lastOutput = "";
 
     for (const step of config.workflow) {
+        if (signal?.aborted) throw new Error("ABORT_SEQUENCE_RECEIVED");
+
         const agentConfig = config.agents.find(a => a.name === step.agentName);
         if (!agentConfig) {
             onLog(this.createLog('system', 'SYSTEM', `ERROR: Agent '${step.agentName}' not found. Skipping.`, false));
@@ -87,12 +83,19 @@ export class MultiAgentService {
     config: SystemConfig,
     chatHistory: ChatHistoryItem[],
     onLog: (log: LogEntry) => void,
-    onRoundUpdate?: (round: number) => void
+    onRoundUpdate?: (round: number) => void,
+    signal?: AbortSignal
   ): Promise<string> {
-    const analyst = config.agents.find(a => a.role === 'analyst')!;
-    const skeptic = config.agents.find(a => a.role === 'skeptic')!;
-    const judge = config.agents.find(a => a.role === 'judge')!;
+    const analyst = config.agents.find(a => a.role === 'analyst') || config.agents[0];
+    const skeptic = config.agents.find(a => a.role === 'skeptic') || config.agents[1];
+    const judge = config.agents.find(a => a.role === 'judge') || config.agents[2];
     const validator = config.agents.find(a => a.role === 'validator');
+
+    if (!analyst || !skeptic || !judge) {
+        throw new Error("Invalid Configuration: Logic Core requires at least 3 agents defined.");
+    }
+
+    if (signal?.aborted) throw new Error("ABORT_SEQUENCE_RECEIVED");
 
     let history = this.buildContextHistory(chatHistory) + `CURRENT USER QUERY: "${userPrompt}"\n`;
     let currentDraft = "";
@@ -100,7 +103,7 @@ export class MultiAgentService {
     let roundsExecuted = 0;
 
     // --- ANALYST (Round 0) ---
-    onLog(this.createLog('analyst', analyst.name, "Initializing deep scan...", true));
+    onLog(this.createLog(analyst.role, analyst.name, "Initializing deep scan...", true));
     
     const analystRes = await this.core.generateJSON(
       REASONING_MODEL,
@@ -114,15 +117,16 @@ export class MultiAgentService {
     currentDraft = analystRes.data.factual_answer;
     history += `\n[${analyst.name}]: ${currentDraft}\n(Confidence: ${analystRes.data.confidence}%)\n`;
     
-    onLog(this.createLog('analyst', analyst.name, currentDraft, false, analystRes.data, analystRes.sources));
+    onLog(this.createLog(analyst.role, analyst.name, currentDraft, false, analystRes.data, analystRes.sources));
 
     // --- DEBATE LOOP ---
     for (let i = 1; i <= config.max_rounds; i++) {
+      if (signal?.aborted) throw new Error("ABORT_SEQUENCE_RECEIVED");
       roundsExecuted = i;
       if (onRoundUpdate) onRoundUpdate(i);
 
       // SKEPTIC
-      onLog(this.createLog('skeptic', skeptic.name, `Running integrity check (Cycle ${i})...`, true));
+      onLog(this.createLog(skeptic.role, skeptic.name, `Running integrity check (Cycle ${i})...`, true));
       
       const skepticRes = await this.core.generateJSON(
         REASONING_MODEL,
@@ -135,7 +139,7 @@ export class MultiAgentService {
 
       history += `\n[${skeptic.name}]: ${skepticRes.data.analysis}\nFlaws: ${skepticRes.data.flaws.join(", ")}\n`;
       const skepticLogContent = skepticRes.data.has_flaws ? `OBJECTION: ${skepticRes.data.analysis}` : `AGREEMENT: ${skepticRes.data.analysis}`;
-      onLog(this.createLog('skeptic', skeptic.name, skepticLogContent, false, skepticRes.data, skepticRes.sources));
+      onLog(this.createLog(skeptic.role, skeptic.name, skepticLogContent, false, skepticRes.data, skepticRes.sources));
 
       if (!skepticRes.data.has_flaws) {
         consensus = true;
@@ -144,7 +148,8 @@ export class MultiAgentService {
       if (i === config.max_rounds) break;
 
       // ANALYST REBUTTAL
-      onLog(this.createLog('analyst', analyst.name, "Processing critique & refining...", true));
+      if (signal?.aborted) throw new Error("ABORT_SEQUENCE_RECEIVED");
+      onLog(this.createLog(analyst.role, analyst.name, "Processing critique & refining...", true));
       
       const rebuttalRes = await this.core.generateJSON(
         REASONING_MODEL,
@@ -157,27 +162,29 @@ export class MultiAgentService {
 
       currentDraft = rebuttalRes.data.factual_answer;
       history += `\n[${analyst.name} (Refined)]: ${currentDraft}\n`;
-      onLog(this.createLog('analyst', analyst.name, currentDraft, false, rebuttalRes.data, rebuttalRes.sources));
+      onLog(this.createLog(analyst.role, analyst.name, currentDraft, false, rebuttalRes.data, rebuttalRes.sources));
     }
 
     // --- JUDGE ---
-    onLog(this.createLog('judge', judge.name, "Compiling final verdict...", true));
+    if (signal?.aborted) throw new Error("ABORT_SEQUENCE_RECEIVED");
+    onLog(this.createLog(judge.role, judge.name, "Compiling final verdict...", true));
     
     const judgeRes = await this.core.generateJSON(
       REASONING_MODEL,
       generateSystemInstruction(judge, config),
       JUDGE_PROMPT(history, consensus, roundsExecuted),
       JUDGE_SCHEMA,
-      false, // Judge relies on pure reasoning + context
+      false, 
       judge
     );
 
     let finalVerdict = judgeRes.data.final_verdict;
-    onLog(this.createLog('judge', judge.name, finalVerdict, false, judgeRes.data));
+    onLog(this.createLog(judge.role, judge.name, finalVerdict, false, judgeRes.data));
 
     // --- VALIDATOR (Optional) ---
     if (validator) {
-      onLog(this.createLog('validator', validator.name, "Running external fact-check...", true));
+      if (signal?.aborted) throw new Error("ABORT_SEQUENCE_RECEIVED");
+      onLog(this.createLog(validator.role, validator.name, "Running external fact-check...", true));
       const validatorRes = await this.core.generateJSON(
         REASONING_MODEL,
         generateSystemInstruction(validator, config),
@@ -188,7 +195,7 @@ export class MultiAgentService {
       );
       finalVerdict = validatorRes.data.final_output;
       const statusPrefix = validatorRes.data.verification_status === 'CONFIRMED' ? '✅' : '⚠';
-      onLog(this.createLog('validator', validator.name, `${statusPrefix} VERIFICATION COMPLETE: ${validatorRes.data.verification_status}\n\n${finalVerdict}`, false, validatorRes.data, validatorRes.sources));
+      onLog(this.createLog(validator.role, validator.name, `${statusPrefix} VERIFICATION COMPLETE: ${validatorRes.data.verification_status}\n\n${finalVerdict}`, false, validatorRes.data, validatorRes.sources));
     }
 
     return finalVerdict;
@@ -219,8 +226,6 @@ export class MultiAgentService {
 
     return response.data.response;
   }
-
-  // --- HELPERS ---
 
   private buildContextHistory(chatHistory: ChatHistoryItem[]): string {
     if (chatHistory.length === 0) return "";

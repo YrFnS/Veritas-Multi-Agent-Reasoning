@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { SystemConfig } from '../types';
 import { PRESETS } from '../constants';
@@ -160,11 +161,11 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({ config, onSave, onCl
              <div className="border-t border-zinc-800 mt-2 pt-2">
                <div className="text-[10px] text-zinc-600 font-bold mb-2 px-2">SCHEMA REFERENCE</div>
                <div className="px-3 text-[10px] text-zinc-500 space-y-2 font-mono">
-                  <p>You can override generation params per agent:</p>
+                  <p>Overrides for optimal reasoning:</p>
                   <ul className="list-disc list-inside opacity-70">
+                    <li><span className="text-veritas-cyan">thinkingBudget</span> (1024 - 32768)</li>
                     <li><span className="text-veritas-cyan">temperature</span> (0.0 - 2.0)</li>
                     <li><span className="text-veritas-cyan">topK</span> (1 - 40)</li>
-                    <li><span className="text-veritas-cyan">topP</span> (0.0 - 1.0)</li>
                   </ul>
                   <button 
                     onClick={handleInsertWorkflowTemplate}

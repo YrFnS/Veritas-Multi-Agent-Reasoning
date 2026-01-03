@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { LogEntry, AgentConfig } from '../types';
 import { TerminalText } from '../../../components/TerminalText';
@@ -17,21 +18,95 @@ export const LogAgent: React.FC<LogAgentProps> = ({ log, agents }) => {
 
   const renderContent = (content: string, isThinking: boolean) => {
     if (isThinking) return null; // Content handled specially in visual block
+    
+    // 1. Split by Code Blocks
     const parts = content.split(/(```[\s\S]*?```)/g);
+    
     return parts.map((part, index) => {
+      // Handle Code Block
       if (part.startsWith('```')) {
         const rawCode = part.replace(/^```[a-z]*\n?|```$/g, '');
         return <CodeBlock key={index} code={rawCode} />;
       }
+      
       if (!part.trim()) return null;
+
+      // 2. Process Text Lines
+      // We group consecutive plain lines to ensure they type out sequentially as one block,
+      // rather than 10 lines typing in parallel.
+      const lines = part.split('\n');
+      const groups: { type: 'header' | 'bullet' | 'text', content: string }[] = [];
+      
+      let currentTextBlock = "";
+
+      lines.forEach((line) => {
+        const trimmed = line.trim();
+        if (!trimmed) {
+            if (currentTextBlock) currentTextBlock += "\n";
+            return;
+        }
+
+        const isHeader = trimmed.startsWith('##');
+        const isBullet = trimmed.startsWith('- ') || trimmed.startsWith('* ');
+
+        if (isHeader || isBullet) {
+            // Flush existing text
+            if (currentTextBlock) {
+                groups.push({ type: 'text', content: currentTextBlock });
+                currentTextBlock = "";
+            }
+            // Push special element
+            if (isHeader) groups.push({ type: 'header', content: line });
+            if (isBullet) groups.push({ type: 'bullet', content: line });
+        } else {
+            // Append to current text block
+            currentTextBlock += (currentTextBlock ? "\n" : "") + line;
+        }
+      });
+
+      // Flush remaining text
+      if (currentTextBlock) {
+         groups.push({ type: 'text', content: currentTextBlock });
+      }
+
       return (
-        <TerminalText 
-          key={index}
-          text={part} 
-          speed={2} 
-          scramble={false}
-          className="text-zinc-300 whitespace-pre-wrap leading-relaxed block max-w-4xl" 
-        />
+        <div key={index} className="space-y-2">
+            {groups.map((group, i) => {
+                if (group.type === 'header') {
+                   return (
+                     <h4 key={i} className="text-veritas-cyan font-bold mt-4 mb-2 tracking-wider uppercase text-sm border-b border-veritas-cyan/20 pb-1 w-max">
+                        {group.content.replace(/^#+\s*/, '')}
+                     </h4>
+                   );
+                }
+                
+                if (group.type === 'bullet') {
+                    return (
+                        <div key={i} className="flex gap-2 ml-2">
+                             <span className="text-zinc-500 mt-0.5 text-[10px]">►</span>
+                             <TerminalText 
+                                text={group.content.replace(/^[-*]\s*/, '')} 
+                                speed={1} 
+                                scramble={false}
+                                className="text-zinc-300 leading-relaxed block" 
+                            />
+                        </div>
+                    );
+                }
+                
+                // Standard Text Block
+                return (
+                    <div key={i} className="min-h-[1.5em]">
+                         <TerminalText 
+                            text={group.content} 
+                            speed={0.5} // Faster typing for long blocks
+                            scramble={false}
+                            className="text-zinc-300 whitespace-pre-wrap leading-relaxed block" 
+                        />
+                    </div>
+                );
+            })}
+        </div>
       );
     });
   };

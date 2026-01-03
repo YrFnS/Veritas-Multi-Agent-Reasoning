@@ -1,7 +1,9 @@
+
 import React from 'react';
 import { AgentConfig, ProcessState, SystemConfig } from '../types';
 import { AgentCard } from './AgentCard';
 import { Tooltip } from '../../../components/Tooltip';
+import { useTelemetry } from '../hooks/useTelemetry';
 
 interface VeritasSidebarProps {
   isOpen: boolean;
@@ -26,6 +28,8 @@ export const VeritasSidebar: React.FC<VeritasSidebarProps> = ({
   onPresetChange,
   onInterrogate
 }) => {
+  const metrics = useTelemetry(processState);
+
   return (
     <>
       {/* SIDEBAR CONTAINER */}
@@ -58,17 +62,17 @@ export const VeritasSidebar: React.FC<VeritasSidebarProps> = ({
             ))}
         </div>
         
-        {/* Status Footer */}
-        <div className="p-4 border-t border-zinc-800 bg-zinc-950/80 shrink-0">
+        {/* Status Footer - LIVE TELEMETRY */}
+        <div className="p-4 border-t border-zinc-800 bg-zinc-950/80 shrink-0 font-mono">
            {/* Mobile Preset Selector */}
            <div className="md:hidden mb-4">
-              <p className="text-[9px] text-zinc-600 mb-2 font-mono uppercase">System Presets</p>
+              <p className="text-[9px] text-zinc-600 mb-2 uppercase">System Presets</p>
               <div className="flex flex-wrap gap-2">
                   {Object.keys(presets).map(key => (
                       <button
                         key={key}
                         onClick={() => { onPresetChange(key); setIsOpen(false); }}
-                        className={`px-3 py-1 text-[9px] font-mono tracking-wider border border-zinc-800 ${activePreset === key ? 'bg-veritas-cyan text-black font-bold' : 'text-zinc-500'}`}
+                        className={`px-3 py-1 text-[9px] tracking-wider border border-zinc-800 ${activePreset === key ? 'bg-veritas-cyan text-black font-bold' : 'text-zinc-500'}`}
                       >
                         {key}
                       </button>
@@ -76,16 +80,47 @@ export const VeritasSidebar: React.FC<VeritasSidebarProps> = ({
               </div>
            </div>
 
-           {/* Network Status */}
-           <div className="flex justify-between items-center text-[9px] font-mono text-zinc-600">
-              <div className="flex items-center gap-2">
-                 <span className="w-1 h-1 bg-emerald-500 rounded-full animate-pulse"></span>
-                 <span>NEURAL LINK: STABLE</span>
+           {/* Metrics Grid */}
+           <div className="grid grid-cols-2 gap-y-2 gap-x-4 text-[9px] text-zinc-500 mb-3">
+              <div className="flex justify-between">
+                <span>CPU LOAD</span>
+                <span className={metrics.cpu > 80 ? 'text-veritas-red' : 'text-veritas-cyan'}>{metrics.cpu.toFixed(1)}%</span>
               </div>
-              <span>LATENCY: 12ms</span>
+              <div className="flex justify-between">
+                <span>MEM ALLOC</span>
+                <span className={metrics.memory > 80 ? 'text-veritas-gold' : 'text-zinc-300'}>{metrics.memory.toFixed(1)}%</span>
+              </div>
+              <div className="flex justify-between">
+                <span>NET I/O</span>
+                <span className="text-zinc-300">{Math.floor(metrics.network)} MB/s</span>
+              </div>
+              <div className="flex justify-between">
+                <span>ENTROPY</span>
+                <span className={metrics.entropy > 0.8 ? 'text-veritas-red' : 'text-zinc-300'}>{metrics.entropy.toFixed(3)}</span>
+              </div>
            </div>
-           <div className="mt-2 h-0.5 w-full bg-zinc-900 overflow-hidden">
-               <div className="h-full w-1/3 bg-zinc-700 animate-[scanline_2s_linear_infinite]"></div>
+
+           {/* Network Status Bar */}
+           <div className="flex justify-between items-center text-[9px] text-zinc-600">
+              <div className="flex items-center gap-2">
+                 <span className={`w-1 h-1 rounded-full ${processState === ProcessState.IDLE ? 'bg-emerald-500' : 'bg-veritas-gold animate-ping'}`}></span>
+                 <span>{processState === ProcessState.IDLE ? 'LINK STABLE' : 'DATA STREAM ACTIVE'}</span>
+              </div>
+              <span>{Math.floor(metrics.fps)} FPS</span>
+           </div>
+           
+           {/* Live Graph visualizer */}
+           <div className="mt-2 h-4 w-full bg-zinc-900 overflow-hidden flex items-end gap-[1px] opacity-50">
+               {[...Array(20)].map((_, i) => (
+                   <div 
+                    key={i} 
+                    className="flex-1 bg-veritas-cyan/50" 
+                    style={{ 
+                        height: `${Math.max(5, (Math.sin(Date.now() / 200 + i) * 0.5 + 0.5) * metrics.cpu)}%`,
+                        opacity: i % 2 === 0 ? 0.8 : 0.4 
+                    }}
+                   ></div>
+               ))}
            </div>
         </div>
       </aside>

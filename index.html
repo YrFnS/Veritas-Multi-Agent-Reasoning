@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
   <head>
@@ -58,7 +59,15 @@
         background-color: #030303;
         color: #e5e5e5;
         overflow: hidden;
+        /* Custom Precision Cursor (SVG Data URI) */
+        cursor: url("data:image/svg+xml,%3Csvg width='24' height='24' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M12 2L12 6M12 18L12 22M2 12L6 12M18 12L22 12' stroke='%2300f0ff' stroke-width='1'/%3E%3Crect x='11' y='11' width='2' height='2' fill='%2300f0ff'/%3E%3Cpath d='M8 8L6 6M16 8L18 6M8 16L6 18M16 16L18 18' stroke='%2300f0ff' stroke-width='1' opacity='0.5'/%3E%3C/svg%3E") 12 12, crosshair;
       }
+      
+      /* Hover state for buttons to show active state cursor */
+      button, a, .cursor-pointer {
+         cursor: url("data:image/svg+xml,%3Csvg width='24' height='24' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Crect x='2' y='2' width='20' height='20' stroke='%23ff2a2a' stroke-width='1'/%3E%3Cline x1='2' y1='2' x2='22' y2='22' stroke='%23ff2a2a' stroke-width='0.5'/%3E%3Cline x1='22' y1='2' x2='2' y2='22' stroke='%23ff2a2a' stroke-width='0.5'/%3E%3C/svg%3E") 12 12, pointer;
+      }
+
       #root {
         animation: turn-on 0.4s cubic-bezier(0.23, 1, 0.32, 1);
       }
