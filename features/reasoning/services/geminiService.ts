@@ -5,7 +5,7 @@ import { ANALYST_SCHEMA, SKEPTIC_SCHEMA, JUDGE_SCHEMA, VALIDATOR_SCHEMA, GENERIC
 import { GeminiCore } from "./geminiCore";
 
 const uuid = () => Math.random().toString(36).substring(2, 9);
-const REASONING_MODEL = 'gemini-3-pro-preview';
+const REASONING_MODEL = 'gemini-3.1-pro-preview';
 
 export class MultiAgentService {
   private core: GeminiCore;
@@ -66,7 +66,8 @@ export class MultiAgentService {
             stepPrompt,
             GENERIC_STEP_SCHEMA,
             true,
-            { ...agentConfig, temperature: step.temperature ?? agentConfig.temperature }
+            { ...agentConfig, temperature: step.temperature ?? agentConfig.temperature },
+            signal
         );
 
         lastOutput = data.output;
@@ -111,7 +112,8 @@ export class MultiAgentService {
       ANALYST_PROMPT(history),
       ANALYST_SCHEMA,
       true,
-      analyst
+      analyst,
+      signal
     );
 
     currentDraft = analystRes.data.factual_answer;
@@ -134,7 +136,8 @@ export class MultiAgentService {
         SKEPTIC_PROMPT(history, currentDraft),
         SKEPTIC_SCHEMA,
         true,
-        skeptic
+        skeptic,
+        signal
       );
 
       history += `\n[${skeptic.name}]: ${skepticRes.data.analysis}\nFlaws: ${skepticRes.data.flaws.join(", ")}\n`;
@@ -157,7 +160,8 @@ export class MultiAgentService {
         `CRITIQUE: ${skepticRes.data.analysis}\nCORRECTION: ${skepticRes.data.correction}\n\nRefine your answer.`,
         ANALYST_SCHEMA,
         true,
-        analyst
+        analyst,
+        signal
       );
 
       currentDraft = rebuttalRes.data.factual_answer;
@@ -175,7 +179,8 @@ export class MultiAgentService {
       JUDGE_PROMPT(history, consensus, roundsExecuted),
       JUDGE_SCHEMA,
       false, 
-      judge
+      judge,
+      signal
     );
 
     let finalVerdict = judgeRes.data.final_verdict;
@@ -191,7 +196,8 @@ export class MultiAgentService {
         VALIDATOR_PROMPT(finalVerdict),
         VALIDATOR_SCHEMA,
         true,
-        validator
+        validator,
+        signal
       );
       finalVerdict = validatorRes.data.final_output;
       const statusPrefix = validatorRes.data.verification_status === 'CONFIRMED' ? '✅' : '⚠';

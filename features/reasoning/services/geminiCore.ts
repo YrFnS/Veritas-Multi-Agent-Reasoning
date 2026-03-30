@@ -1,5 +1,5 @@
 
-import { GoogleGenAI, Schema, Modality } from "@google/genai";
+import { GoogleGenAI, Schema, Modality, ThinkingLevel } from "@google/genai";
 import { AgentConfig } from "../types";
 
 /**
@@ -26,25 +26,33 @@ export class GeminiCore {
     userPrompt: string,
     schema: Schema,
     useTools: boolean = false,
-    configOverrides: Partial<AgentConfig> = {}
+    configOverrides: Partial<AgentConfig> = {},
+    signal?: AbortSignal
   ): Promise<{ data: any; sources?: any[] }> {
     const MAX_RETRIES = 2;
     let attempt = 0;
     let lastError: any;
 
     while (attempt <= MAX_RETRIES) {
+      if (signal?.aborted) throw new Error("ABORT_SEQUENCE_RECEIVED");
       try {
-        // Default thinking budget is 2048 if not specified.
-        // We do NOT set maxOutputTokens here to avoid choking the model if the thinking budget is high.
-        // The effective output limit is (Total - Thinking).
-        const thinkingBudget = configOverrides.thinkingBudget ?? 2048;
+        // Map thinkingBudget to ThinkingLevel
+        // Note: gemini-3.1-pro-preview defaults to HIGH
+        let thinkingLevel = ThinkingLevel.HIGH;
+        if (configOverrides.thinkingBudget !== undefined) {
+            if (configOverrides.thinkingBudget === 0) thinkingLevel = ThinkingLevel.MINIMAL;
+            else if (configOverrides.thinkingBudget < 4000) thinkingLevel = ThinkingLevel.LOW;
+        }
 
         const config: any = {
           systemInstruction: systemPrompt,
           responseMimeType: "application/json",
           responseSchema: schema,
           temperature: configOverrides.temperature ?? 0.1,
-          thinkingConfig: { thinkingBudget },
+          thinkingConfig: { thinkingLevel },
+          // CRITICAL: maxOutputTokens must be large enough to include both thinking and response.
+          // Truncation leads to JSON parse errors.
+          maxOutputTokens: 32768, 
         };
 
         if (configOverrides.topK) config.topK = configOverrides.topK;
@@ -57,17 +65,32 @@ export class GeminiCore {
           config,
         });
 
+        if (signal?.aborted) throw new Error("ABORT_SEQUENCE_RECEIVED");
+
         const text = response.text;
         const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
 
         if (!text) throw new Error("Empty response from AI");
         
-        return {
-          data: this.cleanAndParseJSON(text),
-          sources: groundingChunks
-        };
+        try {
+          return {
+            data: this.cleanAndParseJSON(text),
+            sources: groundingChunks
+          };
+        } catch (parseError) {
+          // If it's a parse error, maybe we can heal it if it's truncated
+          const healedData = this.attemptHealJSON(text);
+          if (healedData) {
+            return {
+              data: healedData,
+              sources: groundingChunks
+            };
+          }
+          throw parseError;
+        }
 
       } catch (error) {
+        if (error instanceof Error && error.message === "ABORT_SEQUENCE_RECEIVED") throw error;
         lastError = error;
         attempt++;
         if (attempt <= MAX_RETRIES) {
@@ -93,6 +116,7 @@ export class GeminiCore {
                 responseModalities: [Modality.AUDIO],
                 speechConfig: {
                     voiceConfig: {
+                        // 'Puck', 'Charon', 'Kore', 'Fenrir', 'Zephyr'
                         prebuiltVoiceConfig: { voiceName: 'Kore' },
                     },
                 },
@@ -126,10 +150,49 @@ export class GeminiCore {
           }
           throw new Error("No JSON object found in response");
         } catch (e3) {
-           console.error("JSON Parse Error. Raw text:", text);
-           throw new Error("Failed to parse agent response. Protocol Deviation.");
+           throw new Error(`JSON Parse Error. Raw text: ${text}`);
         }
       }
+    }
+  }
+
+  /**
+   * Attempt to heal truncated JSON by closing open structures.
+   */
+  private attemptHealJSON(text: string): any {
+    let healed = text.trim();
+    
+    // If it ends with a comma, strip it
+    if (healed.endsWith(',')) {
+      healed = healed.slice(0, -1);
+    }
+
+    // If it ends with a key and colon like "flaws":
+    if (healed.endsWith('":')) {
+      healed += ' []'; // Assume empty array for common truncation point
+    } else if (healed.endsWith('"')) {
+      // Ends mid-string or mid-key
+      // Hard to heal reliably, but let's try to close it
+    }
+
+    // Stack-based bracket closer
+    const stack: string[] = [];
+    for (let i = 0; i < healed.length; i++) {
+        const char = healed[i];
+        if (char === '{') stack.push('}');
+        else if (char === '[') stack.push(']');
+        else if (char === '}' && stack[stack.length - 1] === '}') stack.pop();
+        else if (char === ']' && stack[stack.length - 1] === ']') stack.pop();
+    }
+
+    while (stack.length > 0) {
+        healed += stack.pop();
+    }
+
+    try {
+        return JSON.parse(healed);
+    } catch (e) {
+        return null;
     }
   }
 }
