@@ -5,7 +5,7 @@ import { ANALYST_SCHEMA, SKEPTIC_SCHEMA, JUDGE_SCHEMA, VALIDATOR_SCHEMA, GENERIC
 import { GeminiCore } from "./geminiCore";
 
 const uuid = () => Math.random().toString(36).substring(2, 9);
-const REASONING_MODEL = 'gemini-3.1-pro-preview';
+const REASONING_MODEL = 'gemini-3-flash-preview';
 
 export class MultiAgentService {
   private core: GeminiCore;
