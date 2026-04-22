@@ -10,12 +10,22 @@ interface ConfigEditorProps {
 }
 
 const CUSTOM_PRESETS_KEY = 'veritas_custom_presets';
+const KEYS_STORAGE_KEY = 'veritas_api_keys';
 
 export const ConfigEditor: React.FC<ConfigEditorProps> = ({ config, onSave, onClose }) => {
   const [jsonText, setJsonText] = useState(JSON.stringify(config, null, 2));
   const [error, setError] = useState<string | null>(null);
   const [customPresets, setCustomPresets] = useState<Record<string, SystemConfig>>({});
   const [newPresetName, setNewPresetName] = useState('');
+  
+  // API Keys state
+  const [apiKeys, setApiKeys] = useState<Record<string, string>>(() => {
+    try {
+      return JSON.parse(localStorage.getItem(KEYS_STORAGE_KEY) || '{}');
+    } catch {
+      return {};
+    }
+  });
 
   // Load custom presets on mount
   useEffect(() => {
@@ -41,6 +51,12 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({ config, onSave, onCl
     } catch (e: any) {
       setError(e.message || "Invalid JSON");
     }
+  };
+
+  const updateApiKey = (provider: string, key: string) => {
+    const updated = { ...apiKeys, [provider]: key };
+    setApiKeys(updated);
+    localStorage.setItem(KEYS_STORAGE_KEY, JSON.stringify(updated));
   };
 
   const handleLoadPreset = (presetConfig: SystemConfig) => {
@@ -116,6 +132,33 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({ config, onSave, onCl
           </div>
           
           <div className="flex-1 overflow-y-auto p-2 space-y-4">
+            {/* CONNECTIVITY */}
+            <div>
+              <div className="text-[10px] text-zinc-600 font-bold mb-2 px-2 uppercase tracking-tighter">Connectivity (Dynamic)</div>
+              <div className="space-y-4 px-2">
+                 <div className="space-y-1">
+                    <label className="text-[9px] text-zinc-500 font-mono">GEMINI_API_KEY</label>
+                    <input 
+                      type="password"
+                      value={apiKeys.gemini || ''}
+                      onChange={(e) => updateApiKey('gemini', e.target.value)}
+                      className="w-full bg-zinc-950 border border-zinc-800 text-[10px] font-mono text-zinc-400 p-1.5 focus:border-veritas-cyan/50 focus:outline-none"
+                      placeholder="Enter Key..."
+                    />
+                 </div>
+                 <div className="space-y-1">
+                    <label className="text-[9px] text-zinc-500 font-mono">OPENROUTER_API_KEY</label>
+                    <input 
+                      type="password"
+                      value={apiKeys.openrouter || ''}
+                      onChange={(e) => updateApiKey('openrouter', e.target.value)}
+                      className="w-full bg-zinc-950 border border-zinc-800 text-[10px] font-mono text-zinc-400 p-1.5 focus:border-veritas-cyan/50 focus:outline-none"
+                      placeholder="Enter Key..."
+                    />
+                 </div>
+              </div>
+            </div>
+
             {/* SYSTEM PRESETS */}
             <div>
               <div className="text-[10px] text-zinc-600 font-bold mb-2 px-2">SYSTEM DEFAULTS</div>
@@ -163,9 +206,10 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({ config, onSave, onCl
                <div className="px-3 text-[10px] text-zinc-500 space-y-2 font-mono">
                   <p>Overrides for optimal reasoning:</p>
                   <ul className="list-disc list-inside opacity-70">
+                    <li><span className="text-veritas-cyan">provider.type</span> ('gemini' | 'openrouter')</li>
+                    <li><span className="text-veritas-cyan">provider.model</span> (e.g. 'gpt-4o')</li>
                     <li><span className="text-veritas-cyan">thinkingBudget</span> (1024 - 32768)</li>
                     <li><span className="text-veritas-cyan">temperature</span> (0.0 - 2.0)</li>
-                    <li><span className="text-veritas-cyan">topK</span> (1 - 40)</li>
                   </ul>
                   <button 
                     onClick={handleInsertWorkflowTemplate}

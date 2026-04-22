@@ -143,13 +143,7 @@ export const useReasoningEngine = (config: SystemConfig) => {
 
   // --- MAIN ENTRY POINT ---
 
-  const startReasoning = useCallback(async (userPrompt: string) => {
-    const apiKey = process.env.API_KEY;
-    if (!apiKey) {
-      console.error("API Key missing");
-      return;
-    }
-
+    const startReasoning = useCallback(async (userPrompt: string) => {
     // Abort previous if exists (though UI prevents this, safe to check)
     if (abortControllerRef.current) {
         abortControllerRef.current.abort();
@@ -185,7 +179,8 @@ export const useReasoningEngine = (config: SystemConfig) => {
         return [...newLogs, userLog];
     });
 
-    const service = new MultiAgentService(apiKey);
+    // Keys are managed by MultiAgentService internally or retrieved from config/localstorage
+    const service = new MultiAgentService();
 
     try {
       // 1. Interrogation Check

@@ -1,6 +1,6 @@
 
 import { GoogleGenAI, Schema, Modality, ThinkingLevel } from "@google/genai";
-import { AgentConfig } from "../types";
+import { AgentConfig, IReasoningCore } from "../types";
 
 /**
  * GeminiCore: The low-level communication layer.
@@ -10,7 +10,7 @@ import { AgentConfig } from "../types";
  * 3. Handle JSON Parsing/Cleaning
  * 4. Handle Raw TTS generation
  */
-export class GeminiCore {
+export class GeminiCore implements IReasoningCore {
   private ai: GoogleGenAI;
 
   constructor(apiKey: string) {

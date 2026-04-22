@@ -44,7 +44,8 @@ export const useSpeech = () => {
   };
 
   const speak = useCallback(async (text: string) => {
-    const apiKey = process.env.API_KEY;
+    const savedKeys = JSON.parse(localStorage.getItem('veritas_api_keys') || '{}');
+    const apiKey = savedKeys.gemini || process.env.GEMINI_API_KEY;
     if (!apiKey) return;
 
     if (sourceRef.current) {

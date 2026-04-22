@@ -21,11 +21,20 @@ export interface WorkflowStep {
   temperature?: number; // Optional override for this specific step
 }
 
+export type ProviderType = 'gemini' | 'openrouter';
+
+export interface ProviderConfig {
+  type: ProviderType;
+  model: string;
+  apiKey?: string; // Optional here, can be provided globally or per request
+}
+
 export interface SystemConfig {
   global_rules: string;
   max_rounds: number;
   agents: AgentConfig[];
   workflow?: WorkflowStep[]; // If present, overrides the standard Analyst/Skeptic/Judge loop
+  provider?: ProviderConfig; // New field for dynamic provider selection
 }
 
 export interface SourceMetadata {
@@ -93,6 +102,18 @@ export interface ValidatorResponse {
   verification_status: 'CONFIRMED' | 'CORRECTED';
   reasoning: string;
   final_output: string;
+}
+
+export interface IReasoningCore {
+  generateJSON(
+    model: string,
+    systemPrompt: string,
+    userPrompt: string,
+    schema: any,
+    useTools: boolean,
+    configOverrides: Partial<AgentConfig>,
+    signal?: AbortSignal
+  ): Promise<{ data: any; sources?: any[] }>;
 }
 
 export interface GenericAgentResponse {

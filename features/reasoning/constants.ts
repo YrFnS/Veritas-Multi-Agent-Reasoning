@@ -4,6 +4,10 @@ import { SystemConfig } from "./types";
 export const DEFAULT_CONFIG: SystemConfig = {
   global_rules: "You are a radically honest AI. Your ONLY goal is the objective, proven truth. You do not care about the user's feelings, politeness, or social conventions. If you do not have sufficient data to answer, you must say 'I do not know' or 'Data insufficient'. Never invent facts to fill gaps. Never agree with the user just to be polite. Accuracy is the only metric of success. If the truth is ambiguous, state the ambiguity clearly.",
   max_rounds: 3,
+  provider: {
+    type: 'gemini',
+    model: 'gemini-flash-lite-latest'
+  },
   agents: [
     {
       "role": "analyst",
@@ -88,6 +92,10 @@ export const PRESETS: Record<string, SystemConfig> = {
   STORY_CHAIN: {
     global_rules: "You are a creative writing suite. Your goal is to produce engaging, novel narratives through a multi-step process.",
     max_rounds: 0, // Not used in chain mode
+    provider: {
+      type: 'gemini',
+      model: 'gemini-flash-lite-latest'
+    },
     agents: [
       {
         "role": "ideator",

@@ -1,23 +1,44 @@
 
-import { SystemConfig, LogEntry, AgentConfig, ChatHistoryItem } from "../types";
+import { SystemConfig, LogEntry, AgentConfig, ChatHistoryItem, IReasoningCore } from "../types";
 import { generateSystemInstruction, ANALYST_PROMPT, SKEPTIC_PROMPT, JUDGE_PROMPT, VALIDATOR_PROMPT, META_INSPECTION_PROMPT } from "./prompts";
 import { ANALYST_SCHEMA, SKEPTIC_SCHEMA, JUDGE_SCHEMA, VALIDATOR_SCHEMA, GENERIC_STEP_SCHEMA, INSPECTION_SCHEMA } from "./schemas";
 import { GeminiCore } from "./geminiCore";
+import { OpenRouterCore } from "./openRouterCore";
 
 const uuid = () => Math.random().toString(36).substring(2, 9);
-const REASONING_MODEL = 'gemini-3-flash-preview';
+const KEYS_STORAGE_KEY = 'veritas_api_keys';
 
 export class MultiAgentService {
-  private core: GeminiCore;
+  
+  private getCore(config: SystemConfig): IReasoningCore {
+    const provider = config.provider;
+    if (!provider) throw new Error("INTERNAL_ERROR: No provider configured in system state.");
+    
+    const savedKeys = JSON.parse(localStorage.getItem(KEYS_STORAGE_KEY) || '{}');
+    const apiKey = provider.apiKey || savedKeys[provider.type] || process.env.GEMINI_API_KEY;
+    
+    if (!apiKey && provider.type !== 'gemini') {
+        throw new Error(`CRITICAL: API Key for ${provider.type.toUpperCase()} not found. Provide in Config Editor.`);
+    }
 
-  constructor(apiKey: string) {
-    this.core = new GeminiCore(apiKey);
+    if (provider.type === 'openrouter') {
+        return new OpenRouterCore(apiKey || "");
+    }
+    return new GeminiCore(apiKey || "");
+  }
+
+  private getModel(config: SystemConfig) {
+    return config.provider?.model || 'gemini-flash-lite-latest';
   }
 
   // --- PUBLIC API ---
 
-  public async generateSpeech(text: string): Promise<string> {
-    return this.core.generateSpeech(text);
+  public async generateSpeech(text: string, config: SystemConfig): Promise<string> {
+    const core = this.getCore(config);
+    if (core instanceof GeminiCore) {
+        return core.generateSpeech(text);
+    }
+    throw new Error("TTS currently only supported via Gemini provider.");
   }
 
   public async runCustomChain(
@@ -31,6 +52,9 @@ export class MultiAgentService {
     if (!config.workflow || config.workflow.length === 0) {
         throw new Error("Workflow mode activated but no steps defined.");
     }
+
+    const core = this.getCore(config);
+    const model = this.getModel(config);
 
     const runningHistory = this.buildContextHistory(chatHistory) + `INITIAL USER REQUEST: "${userPrompt}"\n\n=== WORKFLOW START ===\n`;
     let currentContext = runningHistory;
@@ -60,8 +84,8 @@ export class MultiAgentService {
           3. Output JSON with 'thought_process' and 'output'.
         `;
 
-        const { data, sources } = await this.core.generateJSON(
-            REASONING_MODEL,
+        const { data, sources } = await core.generateJSON(
+            model,
             generateSystemInstruction(agentConfig, config),
             stepPrompt,
             GENERIC_STEP_SCHEMA,
@@ -98,6 +122,9 @@ export class MultiAgentService {
 
     if (signal?.aborted) throw new Error("ABORT_SEQUENCE_RECEIVED");
 
+    const core = this.getCore(config);
+    const model = this.getModel(config);
+
     let history = this.buildContextHistory(chatHistory) + `CURRENT USER QUERY: "${userPrompt}"\n`;
     let currentDraft = "";
     let consensus = false;
@@ -106,8 +133,8 @@ export class MultiAgentService {
     // --- ANALYST (Round 0) ---
     onLog(this.createLog(analyst.role, analyst.name, "Initializing deep scan...", true));
     
-    const analystRes = await this.core.generateJSON(
-      REASONING_MODEL,
+    const analystRes = await core.generateJSON(
+      model,
       generateSystemInstruction(analyst, config),
       ANALYST_PROMPT(history),
       ANALYST_SCHEMA,
@@ -130,8 +157,8 @@ export class MultiAgentService {
       // SKEPTIC
       onLog(this.createLog(skeptic.role, skeptic.name, `Running integrity check (Cycle ${i})...`, true));
       
-      const skepticRes = await this.core.generateJSON(
-        REASONING_MODEL,
+      const skepticRes = await core.generateJSON(
+        model,
         generateSystemInstruction(skeptic, config),
         SKEPTIC_PROMPT(history, currentDraft),
         SKEPTIC_SCHEMA,
@@ -154,8 +181,8 @@ export class MultiAgentService {
       if (signal?.aborted) throw new Error("ABORT_SEQUENCE_RECEIVED");
       onLog(this.createLog(analyst.role, analyst.name, "Processing critique & refining...", true));
       
-      const rebuttalRes = await this.core.generateJSON(
-        REASONING_MODEL,
+      const rebuttalRes = await core.generateJSON(
+        model,
         generateSystemInstruction(analyst, config),
         `CRITIQUE: ${skepticRes.data.analysis}\nCORRECTION: ${skepticRes.data.correction}\n\nRefine your answer.`,
         ANALYST_SCHEMA,
@@ -173,8 +200,8 @@ export class MultiAgentService {
     if (signal?.aborted) throw new Error("ABORT_SEQUENCE_RECEIVED");
     onLog(this.createLog(judge.role, judge.name, "Compiling final verdict...", true));
     
-    const judgeRes = await this.core.generateJSON(
-      REASONING_MODEL,
+    const judgeRes = await core.generateJSON(
+      model,
       generateSystemInstruction(judge, config),
       JUDGE_PROMPT(history, consensus, roundsExecuted),
       JUDGE_SCHEMA,
@@ -190,8 +217,8 @@ export class MultiAgentService {
     if (validator) {
       if (signal?.aborted) throw new Error("ABORT_SEQUENCE_RECEIVED");
       onLog(this.createLog(validator.role, validator.name, "Running external fact-check...", true));
-      const validatorRes = await this.core.generateJSON(
-        REASONING_MODEL,
+      const validatorRes = await core.generateJSON(
+        model,
         generateSystemInstruction(validator, config),
         VALIDATOR_PROMPT(finalVerdict),
         VALIDATOR_SCHEMA,
@@ -218,8 +245,11 @@ export class MultiAgentService {
 
     onLog(this.createLog(targetAgent.role, targetAgent.name, `INTERROGATION INTERRUPT: "${userQuery}"`, true));
 
-    const response = await this.core.generateJSON(
-      REASONING_MODEL,
+    const core = this.getCore(config);
+    const model = this.getModel(config);
+
+    const response = await core.generateJSON(
+      model,
       generateSystemInstruction(targetAgent, config),
       META_INSPECTION_PROMPT(historyBlock, userQuery),
       INSPECTION_SCHEMA,
