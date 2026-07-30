@@ -1,136 +1,181 @@
+import { Schema } from '@google/genai';
+import type {
+  AgentConfig,
+  IReasoningCore,
+  ProviderCapabilities,
+  SourceMetadata,
+} from '../types.js';
+import { throwIfAborted, waitForRetry } from './abortUtils.js';
+import { createWebSource } from './sourceUtils.js';
+import { parseStrictJson } from './strictJson.js';
 
-import { Schema } from "@google/genai";
-import { AgentConfig, IReasoningCore } from "../types";
+interface OpenRouterAnnotation {
+  type?: string;
+  url_citation?: {
+    url?: string;
+    title?: string;
+  };
+}
 
-export interface OpenRouterResponse {
-  choices: {
-    message: {
-      content: string;
+interface OpenRouterResponse {
+  choices?: Array<{
+    message?: {
+      content?: string;
+      annotations?: OpenRouterAnnotation[];
     };
-  }[];
+  }>;
 }
 
 export class OpenRouterCore implements IReasoningCore {
-  private apiKey: string;
-  private baseUrl = "https://openrouter.ai/api/v1";
+  public readonly capabilities: ProviderCapabilities = {
+    structuredOutput: true,
+    strictJsonSchema: true,
+    webSearch: false,
+    citations: false,
+    speech: false,
+  };
 
-  constructor(apiKey: string) {
-    this.apiKey = apiKey;
-  }
+  private readonly baseUrl = 'https://openrouter.ai/api/v1';
+
+  constructor(private readonly apiKey: string) {}
 
   public async generateJSON(
     model: string,
     systemPrompt: string,
     userPrompt: string,
     schema: Schema,
-    useTools: boolean = false, // Added for signature parity
+    _useTools = false,
     configOverrides: Partial<AgentConfig> = {},
     signal?: AbortSignal
-  ): Promise<{ data: any; sources?: any[] }> {
-    const MAX_RETRIES = 2;
+  ): Promise<{ data: unknown; sources?: SourceMetadata[] }> {
+    const maxRetries = 2;
     let attempt = 0;
-    let lastError: any;
+    let lastError: unknown;
 
-    while (attempt <= MAX_RETRIES) {
-      if (signal?.aborted) throw new Error("ABORT_SEQUENCE_RECEIVED");
+    while (attempt <= maxRetries) {
+      throwIfAborted(signal);
 
       try {
         const response = await fetch(`${this.baseUrl}/chat/completions`, {
-          method: "POST",
+          method: 'POST',
           headers: {
-            "Authorization": `Bearer ${this.apiKey}`,
-            "Content-Type": "application/json",
-            "HTTP-Referer": window.location.origin,
-            "X-Title": "Veritas Truth Engine",
+            Authorization: `Bearer ${this.apiKey}`,
+            'Content-Type': 'application/json',
+            'HTTP-Referer': window.location.origin,
+            'X-Title': 'Veritas Truth Engine',
           },
           body: JSON.stringify({
-            model: model,
+            model,
             messages: [
-              { role: "system", content: systemPrompt },
-              { role: "user", content: userPrompt + "\n\nCRITICAL: You MUST output valid JSON only." }
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: userPrompt },
             ],
-            response_format: { type: "json_object" },
+            response_format: {
+              type: 'json_schema',
+              json_schema: {
+                name: 'veritas_response',
+                strict: true,
+                schema: this.toJsonSchema(schema),
+              },
+            },
+            provider: { require_parameters: true },
             temperature: configOverrides.temperature ?? 0.1,
           }),
-          signal
+          signal,
         });
 
         if (!response.ok) {
-          const errData = await response.json().catch(() => ({}));
-          throw new Error(errData.error?.message || `OpenRouter Error: ${response.status}`);
+          const errorData = await response.json().catch(() => ({}));
+          const message =
+            (errorData as { error?: { message?: string } }).error?.message ||
+            `OpenRouter error: ${response.status}`;
+          throw new Error(message);
         }
 
-        const result: OpenRouterResponse = await response.json();
-        const text = result.choices[0].message.content;
-
-        if (!text) throw new Error("Empty response from OpenRouter");
+        const result = (await response.json()) as OpenRouterResponse;
+        const message = result.choices?.[0]?.message;
+        const text = message?.content;
+        if (!text) throw new Error('Empty response from OpenRouter.');
 
         return {
-          data: this.cleanAndParseJSON(text),
-          sources: [] // OpenRouter grounding is more complex
+          data: parseStrictJson(text, 'OpenRouter'),
+          sources: this.normalizeSources(message.annotations),
         };
+      } catch (error) {
+        if (
+          signal?.aborted ||
+          (error instanceof Error &&
+            (error.name === 'AbortError' ||
+              error.message === 'ABORT_SEQUENCE_RECEIVED'))
+        ) {
+          throw new Error('ABORT_SEQUENCE_RECEIVED');
+        }
 
-      } catch (error: any) {
-        if (error.name === "AbortError" || error.message === "ABORT_SEQUENCE_RECEIVED") throw new Error("ABORT_SEQUENCE_RECEIVED");
-        
         lastError = error;
-        attempt++;
-        if (attempt <= MAX_RETRIES) {
-          console.warn(`OpenRouterCore: Execution failed (Attempt ${attempt}/${MAX_RETRIES}). Retrying...`, error);
-          await new Promise(resolve => setTimeout(resolve, attempt * 1000));
+        attempt += 1;
+        if (attempt <= maxRetries) {
+          console.warn(
+            `OpenRouterCore: execution failed (attempt ${attempt}/${maxRetries}). Retrying...`,
+            error
+          );
+          await waitForRetry(attempt * 1000, signal);
         }
       }
     }
 
-    throw lastError;
+    throw lastError instanceof Error
+      ? lastError
+      : new Error('OpenRouter request failed after retries.');
   }
 
-  private cleanAndParseJSON(text: string): any {
-    try {
-      // 1. First attempt: Direct parse (fastest)
-      return JSON.parse(text);
-    } catch (e) {
-      // 2. Second attempt: Remove markdown code blocks
-      try {
-        const cleanText = text.replace(/```json\n?|```\n?/g, "").trim();
-        return JSON.parse(cleanText);
-      } catch (e2) {
-        // 3. Third attempt: Robust extraction of the first JSON object
-        try {
-          const jsonMatch = text.match(/\{[\s\S]*\}/);
-          if (jsonMatch) {
-             return JSON.parse(jsonMatch[0]);
-          }
-          throw new Error("No JSON object found in response");
-        } catch (e3) {
-            // 4. Fourth attempt: Healing
-           const healed = this.attemptHealJSON(text);
-           if (healed) return healed;
-           throw new Error(`JSON Parse Error. Raw text: ${text}`);
-        }
+  private toJsonSchema(schema: unknown): Record<string, unknown> {
+    if (typeof schema !== 'object' || schema === null || Array.isArray(schema)) {
+      return {};
+    }
+
+    const input = schema as Record<string, unknown>;
+    const output: Record<string, unknown> = {};
+
+    for (const [key, value] of Object.entries(input)) {
+      if (key === 'type' && typeof value === 'string') {
+        output.type = value.toLowerCase();
+      } else if (key === 'properties' && value && typeof value === 'object') {
+        output.properties = Object.fromEntries(
+          Object.entries(value as Record<string, unknown>).map(
+            ([name, child]) => [name, this.toJsonSchema(child)]
+          )
+        );
+      } else if (key === 'items') {
+        output.items = this.toJsonSchema(value);
+      } else if (
+        key === 'required' ||
+        key === 'enum' ||
+        key === 'description' ||
+        key === 'format'
+      ) {
+        output[key] = value;
       }
     }
+
+    if (output.type === 'object') {
+      output.additionalProperties = false;
+    }
+
+    return output;
   }
 
-  private attemptHealJSON(text: string): any {
-    let healed = text.trim();
-    if (healed.endsWith(',')) healed = healed.slice(0, -1);
-    if (healed.endsWith('":')) healed += ' []';
+  private normalizeSources(
+    annotations: OpenRouterAnnotation[] | undefined
+  ): SourceMetadata[] {
+    if (!annotations) return [];
 
-    const stack: string[] = [];
-    for (let i = 0; i < healed.length; i++) {
-        const char = healed[i];
-        if (char === '{') stack.push('}');
-        else if (char === '[') stack.push(']');
-        else if (char === '}' && stack[stack.length - 1] === '}') stack.pop();
-        else if (char === ']' && stack[stack.length - 1] === ']') stack.pop();
-    }
-    while (stack.length > 0) healed += stack.pop();
-
-    try {
-        return JSON.parse(healed);
-    } catch (e) {
-        return null;
-    }
+    return annotations.flatMap((annotation) => {
+      if (annotation.type !== 'url_citation') return [];
+      const source = createWebSource(
+        annotation.url_citation?.url,
+        annotation.url_citation?.title
+      );
+      return source ? [source] : [];
+    });
   }
 }
