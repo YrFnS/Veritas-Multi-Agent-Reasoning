@@ -1,11 +1,13 @@
 import type {
   AgentConfig,
   ChatHistoryItem,
+  ClaimVerificationSummary,
   LogEntry,
   ReasoningOutcome,
   SourceMetadata,
   SystemConfig,
   VerificationStatus,
+  VerifiedClaim,
 } from '../types.js';
 import {
   ANALYST_PROMPT,
@@ -13,7 +15,6 @@ import {
   JUDGE_PROMPT,
   META_INSPECTION_PROMPT,
   SKEPTIC_PROMPT,
-  VALIDATOR_PROMPT,
   generateSystemInstruction,
 } from './prompts.js';
 import {
@@ -22,7 +23,6 @@ import {
   INSPECTION_SCHEMA,
   JUDGE_SCHEMA,
   SKEPTIC_SCHEMA,
-  VALIDATOR_SCHEMA,
 } from './schemas.js';
 import {
   buildStandardOutcome,
@@ -35,15 +35,15 @@ import {
   getProviderConfig,
   resolveStandardAgents,
 } from './reasoningRuntime.js';
-import { dedupeSources } from './sourceUtils.js';
 import {
   assertAnalystResponse,
   assertGenericAgentResponse,
   assertInspectionResponse,
   assertJudgeResponse,
   assertSkepticResponse,
-  assertValidatorResponse,
 } from '../validation/responseValidation.js';
+import { createEmptyClaimSummary } from './claimVerification.js';
+import { runClaimLevelValidation } from './claimValidationService.js';
 
 export class MultiAgentService {
   public async generateSpeech(
@@ -347,59 +347,30 @@ export class MultiAgentService {
     let validatorRan = false;
     let verificationStatus: VerificationStatus = null;
     let validatorSources: SourceMetadata[] = [];
+    let verifiedClaims: VerifiedClaim[] = [];
+    let claimSummary: ClaimVerificationSummary = createEmptyClaimSummary();
+    let evidenceConclusive = judgeData.is_conclusive;
 
     if (validator && core.capabilities.webSearch) {
-      if (signal?.aborted) throw new Error('ABORT_SEQUENCE_RECEIVED');
-      onLog(
-        createLogEntry(
-          validator.role,
-          validator.name,
-          'Running source-backed external validation...',
-          true
-        )
-      );
-
-      const validatorResponse = await core.generateJSON(
-        model,
-        generateSystemInstruction(validator, config),
-        VALIDATOR_PROMPT(userPrompt, finalVerdict),
-        VALIDATOR_SCHEMA,
-        true,
+      const validation = await runClaimLevelValidation({
+        userPrompt,
+        verdict: finalVerdict,
         validator,
-        signal
-      );
-      const validatorData = assertValidatorResponse(validatorResponse.data);
-      validatorRan = true;
-      finalVerdict = validatorData.final_output;
-      validatorSources = dedupeSources(validatorResponse.sources);
-      verificationStatus =
-        validatorSources.length > 0
-          ? validatorData.verification_status
-          : 'UNVERIFIED';
+        config,
+        core,
+        model,
+        onLog,
+        signal,
+      });
 
-      if (validatorSources.length === 0) {
-        warnings.push(
-          'The validator returned no external source metadata, so its result was not labeled verified.'
-        );
-      }
-
-      const statusPrefix =
-        verificationStatus === 'CONFIRMED'
-          ? '✅ SOURCE CHECK CONFIRMED'
-          : verificationStatus === 'CORRECTED'
-            ? '⚠ SOURCE CHECK CORRECTED'
-            : '⚠ SOURCE CHECK UNVERIFIED';
-
-      onLog(
-        createLogEntry(
-          validator.role,
-          validator.name,
-          `${statusPrefix}\n\n${finalVerdict}`,
-          false,
-          validatorData,
-          validatorSources
-        )
-      );
+      validatorRan = validation.validatorRan;
+      verificationStatus = validation.verificationStatus;
+      finalVerdict = validation.answer;
+      validatorSources = validation.sources;
+      verifiedClaims = validation.claims;
+      claimSummary = validation.summary;
+      evidenceConclusive = judgeData.is_conclusive && validation.isConclusive;
+      warnings.push(...validation.warnings);
     } else if (validator) {
       warnings.push(
         'The validator was skipped because the selected provider adapter has no web-search capability.'
@@ -411,10 +382,12 @@ export class MultiAgentService {
       consensusReached: consensus,
       validatorRan,
       verificationStatus,
-      isConclusive: judgeData.is_conclusive,
+      isConclusive: evidenceConclusive,
       roundsExecuted,
       warnings,
       sources: validatorSources,
+      claims: verifiedClaims,
+      claimSummary,
       provider: provider.type,
       model,
     });
