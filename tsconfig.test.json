@@ -15,10 +15,13 @@
     "features/reasoning/validation/configValidation.ts",
     "features/reasoning/validation/responseValidation.ts",
     "features/reasoning/services/abortUtils.ts",
+    "features/reasoning/services/claimVerification.ts",
     "features/reasoning/services/prompts.ts",
     "features/reasoning/services/providerKeys.ts",
     "features/reasoning/services/reasoningOutcome.ts",
     "features/reasoning/services/sourceUtils.ts",
-    "features/reasoning/services/strictJson.ts"
+    "features/reasoning/services/strictJson.ts",
+    "features/reasoning/evaluation/evaluationHarness.ts",
+    "features/reasoning/evaluation/evaluationDataset.ts"
   ]
 }
