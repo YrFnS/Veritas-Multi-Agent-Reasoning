@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022", "DOM"],
+    "strict": true,
+    "skipLibCheck": true,
+    "outDir": ".test-dist",
+    "rootDir": ".",
+    "noEmit": false
+  },
+  "include": [
+    "features/reasoning/types.ts",
+    "features/reasoning/validation/configValidation.ts",
+    "features/reasoning/validation/responseValidation.ts",
+    "features/reasoning/services/abortUtils.ts",
+    "features/reasoning/services/prompts.ts",
+    "features/reasoning/services/providerKeys.ts",
+    "features/reasoning/services/reasoningOutcome.ts",
+    "features/reasoning/services/sourceUtils.ts",
+    "features/reasoning/services/strictJson.ts"
+  ]
+}
