@@ -35,6 +35,9 @@ jobs:
       - name: Audit production dependencies
         run: npm run audit:prod
 
+      - name: Report development dependency advisories
+        run: npm audit --audit-level=high || true
+
       - name: Type-check
         run: npm run typecheck
 
