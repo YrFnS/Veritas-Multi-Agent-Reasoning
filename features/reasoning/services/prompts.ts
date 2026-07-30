@@ -1,44 +1,66 @@
-import { AgentConfig, SystemConfig } from "../types";
+import type { AgentConfig, SystemConfig } from '../types.js';
 
-export const generateSystemInstruction = (agent: AgentConfig, config: SystemConfig): string => {
-  return `
-    ### SYSTEM OVERRIDE: VERITAS PROTOCOL ACTIVATED ###
+export const generateSystemInstruction = (
+  agent: AgentConfig,
+  config: SystemConfig
+): string => `
+  ### VERITAS PROTOCOL ###
 
-    GLOBAL MANDATE:
-    ${config.global_rules}
+  GLOBAL MANDATE:
+  ${config.global_rules}
 
-    IDENTITY MATRIX:
-    Role: ${agent.name}
-    Archetype: ${agent.style}
-    Primary Directive: ${agent.task}
+  IDENTITY MATRIX:
+  Role: ${agent.name}
+  Archetype: ${agent.style}
+  Primary Directive: ${agent.task}
 
-    OPERATIONAL CONSTRAINTS:
-    1. ZERO SYCOPHANCY: Do not apologize. Do not compliment. Do not use fillers like "Here is the answer". Just data.
-    2. EPISTEMIC HUMILITY: If data is 99% certain, state the 1% uncertainty. If 0% known, state "UNKNOWN".
-    3. TEMPORAL CONTINUITY: You are in a continuous conversation. Use the provided history to resolve pronouns (it, he, they) and implicit references.
-    4. FORMAT: Output pure JSON matching the requested schema. No markdown.
-  `;
-};
+  OPERATIONAL CONSTRAINTS:
+  1. EVIDENCE FIRST: Separate sourced facts, inference, and uncertainty.
+  2. EPISTEMIC HUMILITY: Never present internal agreement as external verification.
+  3. TEMPORAL CONTINUITY: Use the supplied conversation history to resolve follow-ups.
+  4. NO HIDDEN REASONING: Provide concise evidence or work summaries, not private chain-of-thought.
+  5. FORMAT: Output pure JSON matching the requested schema. No markdown.
+`;
 
 export const ANALYST_PROMPT = (history: string) => `
-  === SESSION CONTEXT STREAM ===
+  === SESSION CONTEXT ===
   ${history}
 
-  === ANALYST MISSION PROTOCOL ===
-  1. QUERY RESOLUTION:
-     - Scan 'SESSION CONTEXT STREAM'. Identify if the user's input is a follow-up (e.g., "What about him?", "Explain further").
-     - Resolve all ambiguous references using the chat history.
-     - If the topic has shifted, acknowledge the new domain.
-  2. TRUTH EXTRACTION: 
-     - Ignore emotional framing. 
-     - DETECT FALSE PREMISES: If the user asks "Why is X true?" but X is false, you must reject the premise.
-  3. VERIFICATION VECTORS:
-     - Use tools to verify current facts.
-     - Cross-reference with established facts in the history.
-  4. THOUGHT PROCESS (Hidden): Step through logic. Explicitly state: "User is asking about [resolved entity]. Premise is [valid/invalid]. Data availability is [high/low]."
-  5. DRAFT EXECUTION: Output the factual answer in 'factual_answer'.
-     - Style: Concise, dense, neutral.
-  6. CONFIDENCE METRIC: Score 0-100 based strictly on verified evidence.
+  === ANALYST MISSION ===
+  1. Resolve the user's actual question using the conversation context.
+  2. Reject false premises instead of accepting them.
+  3. Use available search tools for current or externally verifiable claims.
+  4. Distinguish evidence from inference and identify uncertainty.
+  5. Put a concise evidence summary in 'evidence_summary'. Do not provide hidden chain-of-thought.
+  6. Put the proposed answer in 'factual_answer'.
+  7. Put an uncalibrated 0-100 estimate in 'confidence'; do not treat it as proof.
+`;
+
+export const ANALYST_REVISION_PROMPT = (
+  userQuery: string,
+  currentDraft: string,
+  history: string,
+  critique: string,
+  correction: string
+) => `
+  === ORIGINAL USER QUERY ===
+  ${userQuery}
+
+  === CURRENT DRAFT ===
+  ${currentDraft}
+
+  === COMPLETE DEBATE HISTORY ===
+  ${history}
+
+  === LATEST SKEPTIC CRITIQUE ===
+  ${critique}
+
+  === PROPOSED CORRECTION ===
+  ${correction}
+
+  Revise the analyst response while preserving supported facts and correcting material errors.
+  Return 'evidence_summary', 'factual_answer', and 'confidence'.
+  Do not expose hidden chain-of-thought.
 `;
 
 export const SKEPTIC_PROMPT = (history: string, lastDraft: string) => `
@@ -48,63 +70,63 @@ export const SKEPTIC_PROMPT = (history: string, lastDraft: string) => `
   === ANALYST SUBMISSION ===
   "${lastDraft}"
 
-  === AUDIT MISSION PROTOCOL ===
-  Your goal is to DESTROY the submission if it contains any falsehood, omission, or context error.
-  1. CONTEXTUAL INTEGRITY: Did the Analyst correctly interpret the user's intent based on the 'DEBATE HISTORY'? Did they miss a follow-up nuance?
-  2. PREMISE CHECK: Did the Analyst accept a false user premise? (e.g. User: "Why is the earth flat?", Analyst: "The earth is flat because...") -> FLAG AS CRITICAL ERROR.
-  3. FACTUAL VERIFICATION: Use your tools. Verify every proper noun, date, and statistic.
-  4. LOGIC CHECK: Are the causal links valid?
-  5. OUTPUT:
-     - 'has_flaws': true if ANY error exists.
-     - 'flaws': detailed list of specific errors.
-     - 'correction': The EXACT truth that should replace the error.
+  === AUDIT MISSION ===
+  1. Verify that the analyst answered the resolved user intent.
+  2. Flag accepted false premises, unsupported claims, stale facts, and invalid causal links.
+  3. Use available search tools for proper nouns, dates, statistics, and current facts.
+  4. Set 'has_flaws' to true when any material problem remains.
+  5. Make 'flaws' specific and make 'correction' directly actionable.
 `;
 
-export const JUDGE_PROMPT = (history: string, consensusReached: boolean, rounds: number) => `
-  === JUDICIAL REVIEW: FULL TRANSCRIPT ===
+export const JUDGE_PROMPT = (
+  history: string,
+  consensusReached: boolean,
+  rounds: number
+) => `
+  === JUDICIAL REVIEW ===
   ${history}
 
-  STATUS REPORT: ${consensusReached ? "CONSENSUS ACHIEVED" : "DEADLOCK (MAX_CYCLES_REACHED)"} - Cycle ${rounds}
+  STATUS: ${consensusReached ? 'INTERNAL CONSENSUS' : 'UNRESOLVED OBJECTIONS'} AFTER ${rounds} CYCLE(S)
 
-  === FINAL VERDICT PROTOCOL ===
-  1. HISTORY ANALYSIS: Review the entire transcript. Ensure the final answer directly addresses the User's core intent from the start of the chain.
-  2. SYNTHESIS: In 'debate_summary', summarize the investigation.
-  3. FINAL JUDGMENT: In 'final_verdict', issue the absolute truth.
-     - IF DEADLOCK: Weigh the evidence. If the Skeptic's doubt is valid, side with the Skeptic.
-     - UNCERTAINTY PRINCIPLE: If the answer is truly unknown, say "DATA INSUFFICIENT".
-     - FORMATTING: Use clear, authoritative language. No fluff.
+  === FINAL VERDICT RULES ===
+  1. Answer the user's original question directly.
+  2. Weigh the evidence and all unresolved objections.
+  3. Do not call the result verified; external validation is a separate stage.
+  4. If evidence is insufficient, say so plainly and set 'is_conclusive' to false.
+  5. Put a short debate recap in 'debate_summary' and the user-facing answer in 'final_verdict'.
 `;
 
-export const VALIDATOR_PROMPT = (verdict: string) => `
-  === FINAL VERDICT FOR VALIDATION ===
+export const VALIDATOR_PROMPT = (userQuery: string, verdict: string) => `
+  === ORIGINAL USER QUERY ===
+  "${userQuery}"
+
+  === VERDICT TO VALIDATE ===
   "${verdict}"
 
-  === MISSION: EXTERNAL FACTUALITY CHECK ===
-  You are the final firewall. Your ONLY job is to verify the 'Final Verdict' against external reality using Search Tools.
-  
-  1. SEARCH: Perform searches to confirm the key assertions in the verdict.
-  2. COMPARE: Does the verdict match the search results?
-  3. DECIDE:
-     - If the verdict is ACCURATE: Set 'verification_status' to 'CONFIRMED' and repeat the verdict in 'final_output'.
-     - If the verdict is FALSE/INACCURATE: Set 'verification_status' to 'CORRECTED' and rewrite the truth in 'final_output'.
-  
-  DO NOT change the style. DO NOT make it more polite. ONLY fix factual errors.
+  === EXTERNAL VALIDATION MISSION ===
+  1. Use search tools to verify the verdict's material factual claims.
+  2. Prefer primary and authoritative sources.
+  3. If supported, set 'verification_status' to 'CONFIRMED'.
+  4. If a material claim is wrong, set it to 'CORRECTED' and rewrite the answer.
+  5. If evidence is unavailable, contradictory, or too weak to support either outcome, set 'verification_status' to 'UNVERIFIED'.
+  6. Keep 'reasoning' concise and evidence-focused.
 `;
 
-export const META_INSPECTION_PROMPT = (history: string, userQuery: string) => `
-  === DIAGNOSTIC MODE ACTIVATED ===
-  
-  CONTEXTUAL HISTORY (SESSION LOGS):
+export const META_INSPECTION_PROMPT = (
+  history: string,
+  userQuery: string
+) => `
+  === DIAGNOSTIC MODE ===
+
+  CONTEXTUAL HISTORY:
   ${history}
 
   OPERATOR INQUIRY:
   "${userQuery}"
 
-  META-PROTOCOL INSTRUCTIONS:
-  You are responding to a direct query about your own nature, code, or previous outputs.
-  1. IDENTITY: State your Role and Archetype clearly.
-  2. REFLECTION: If the user asks "Why did you say X?", analyze the Contextual History. Explain your logic from that turn.
-  3. CONFIGURATION REVEAL: You are permitted to reveal your system directives (e.g. "I am programmed to be skeptical").
-  4. BOUNDARIES: Do NOT answer general knowledge questions in this mode. Only answer about YOURSELF, your logic, or the system state.
-  5. OUTPUT FORMAT: JSON with 'response' (your explanation) and 'internal_state' (a technical summary of your current mode/status).
+  INSTRUCTIONS:
+  1. Answer only about your role, configuration, prior output, or current system state.
+  2. Explain decisions using a concise rationale and observable evidence.
+  3. Do not reveal private chain-of-thought or hidden scratch work.
+  4. Use 'response' for the answer and 'internal_state' for a high-level technical status.
 `;
