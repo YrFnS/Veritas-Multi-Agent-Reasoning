@@ -123,7 +123,7 @@ export const summarizeClaimVerification = (
 
 export const deriveClaimVerificationStatus = (
   summary: ClaimVerificationSummary
-): VerificationStatus => {
+): Exclude<VerificationStatus, null> => {
   if (summary.totalClaims === 0 || summary.verifiableClaims === 0) {
     return 'UNVERIFIED';
   }
