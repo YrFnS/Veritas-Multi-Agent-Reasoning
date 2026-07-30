@@ -1,24 +1,22 @@
-
 export interface AgentConfig {
-  role: string; // Changed from literal union to string to allow custom roles
+  role: string;
   name: string;
   color: string;
   style: string;
   task: string;
   icon: string;
-  // Optional Generation Overrides
   temperature?: number;
   topK?: number;
   topP?: number;
-  thinkingBudget?: number; // Token budget for Gemini 3.0 "Thinking" process
+  thinkingBudget?: number;
 }
 
 export interface WorkflowStep {
   id: string;
   name: string;
-  agentName: string; // Must match an agent in the agents array
-  instruction: string; // Specific prompt for this step
-  temperature?: number; // Optional override for this specific step
+  agentName: string;
+  instruction: string;
+  temperature?: number;
 }
 
 export type ProviderType = 'gemini' | 'openrouter';
@@ -26,15 +24,22 @@ export type ProviderType = 'gemini' | 'openrouter';
 export interface ProviderConfig {
   type: ProviderType;
   model: string;
-  apiKey?: string; // Optional here, can be provided globally or per request
+}
+
+export interface ProviderCapabilities {
+  structuredOutput: boolean;
+  strictJsonSchema: boolean;
+  webSearch: boolean;
+  citations: boolean;
+  speech: boolean;
 }
 
 export interface SystemConfig {
   global_rules: string;
   max_rounds: number;
   agents: AgentConfig[];
-  workflow?: WorkflowStep[]; // If present, overrides the standard Analyst/Skeptic/Judge loop
-  provider?: ProviderConfig; // New field for dynamic provider selection
+  workflow?: WorkflowStep[];
+  provider: ProviderConfig;
 }
 
 export interface SourceMetadata {
@@ -44,43 +49,8 @@ export interface SourceMetadata {
   };
 }
 
-export interface LogEntry {
-  id: string;
-  agentRole: string; // Generalized
-  agentName: string;
-  content: string; // The main text to display
-  metadata?: any; // For structured data (reasoning, flaws, etc.)
-  sources?: SourceMetadata[]; // For search grounding
-  timestamp: number;
-  isThinking?: boolean;
-}
-
-export interface ChatHistoryItem {
-  role: 'user' | 'model';
-  content: string;
-}
-
-export interface ReasoningResult {
-  finalAnswer: string;
-  logs: LogEntry[];
-  success: boolean;
-}
-
-export enum ProcessState {
-  IDLE = 'IDLE',
-  ANALYZING = 'ANALYZING',
-  AUDITING = 'AUDITING',
-  JUDGING = 'JUDGING',
-  VALIDATING = 'VALIDATING',
-  COMPLETE = 'COMPLETE',
-  ERROR = 'ERROR',
-  INTERROGATION = 'INTERROGATION',
-  WORKFLOW_RUNNING = 'NEURAL_CHAIN_ACTIVE'
-}
-
-// Structured Response Types for Agents
 export interface AnalystResponse {
-  thought_process: string;
+  evidence_summary: string;
   factual_answer: string;
   confidence: number;
 }
@@ -98,13 +68,102 @@ export interface JudgeResponse {
   is_conclusive: boolean;
 }
 
+export type VerificationStatus =
+  | 'CONFIRMED'
+  | 'CORRECTED'
+  | 'UNVERIFIED'
+  | null;
+
 export interface ValidatorResponse {
-  verification_status: 'CONFIRMED' | 'CORRECTED';
+  verification_status: Exclude<VerificationStatus, null>;
   reasoning: string;
   final_output: string;
 }
 
+export interface GenericAgentResponse {
+  work_summary: string;
+  output: string;
+  meta_data?: Record<string, unknown>;
+}
+
+export interface InspectionResponse {
+  response: string;
+  internal_state: string;
+}
+
+export type ReasoningMode = 'standard' | 'workflow' | 'interrogation';
+
+export type ReasoningStatus =
+  | 'verified'
+  | 'corrected'
+  | 'unverified'
+  | 'disputed'
+  | 'insufficient_evidence';
+
+export interface ReasoningOutcome {
+  status: ReasoningStatus;
+  answer: string;
+  mode: ReasoningMode;
+  consensusReached: boolean;
+  validatorRan: boolean;
+  verificationStatus: VerificationStatus;
+  isConclusive: boolean;
+  roundsExecuted: number;
+  warnings: string[];
+  sources: SourceMetadata[];
+  provider: ProviderType;
+  model: string;
+}
+
+export type LogMetadata = Partial<
+  AnalystResponse &
+    SkepticResponse &
+    JudgeResponse &
+    ValidatorResponse &
+    GenericAgentResponse &
+    InspectionResponse
+> & {
+  outcome?: ReasoningOutcome;
+};
+
+export interface LogEntry {
+  id: string;
+  agentRole: string;
+  agentName: string;
+  content: string;
+  metadata?: LogMetadata;
+  sources?: SourceMetadata[];
+  timestamp: number;
+  isThinking?: boolean;
+}
+
+export interface ChatHistoryItem {
+  role: 'user' | 'model';
+  content: string;
+}
+
+export interface ReasoningResult {
+  outcome: ReasoningOutcome;
+  logs: LogEntry[];
+  success: boolean;
+}
+
+export enum ProcessState {
+  IDLE = 'IDLE',
+  ANALYZING = 'ANALYZING',
+  AUDITING = 'AUDITING',
+  JUDGING = 'JUDGING',
+  VALIDATING = 'VALIDATING',
+  COMPLETE = 'COMPLETE',
+  CANCELLED = 'CANCELLED',
+  ERROR = 'ERROR',
+  INTERROGATION = 'INTERROGATION',
+  WORKFLOW_RUNNING = 'NEURAL_CHAIN_ACTIVE',
+}
+
 export interface IReasoningCore {
+  readonly capabilities: ProviderCapabilities;
+  generateSpeech?(text: string): Promise<string>;
   generateJSON(
     model: string,
     systemPrompt: string,
@@ -113,11 +172,5 @@ export interface IReasoningCore {
     useTools: boolean,
     configOverrides: Partial<AgentConfig>,
     signal?: AbortSignal
-  ): Promise<{ data: any; sources?: any[] }>;
-}
-
-export interface GenericAgentResponse {
-    thought_process: string;
-    output: string;
-    meta_data?: any;
+  ): Promise<{ data: unknown; sources?: SourceMetadata[] }>;
 }
