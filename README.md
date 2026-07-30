@@ -1,69 +1,164 @@
-# VERITAS // TRUTH ENGINE
+# VERITAS // MULTI-AGENT REASONING
 
-**Veritas** is a sophisticated Multi-Agent Reasoning System designed to minimize hallucinations and maximize factual accuracy through recursive debate. Built on the **Google Gemini 3** architecture, it orchestrates a team of specialized AI agents who analyze, critique, and judge information before presenting a final verdict.
+Veritas is a browser-based multi-agent reasoning interface. It coordinates specialized agents that draft, challenge, synthesize, and optionally validate an answer while keeping the result's evidence status visible.
 
-## 🧠 The Cognitive Architecture
+Veritas is designed to **reduce unsupported claims**, not to guarantee truth or eliminate hallucinations. A result is labeled **Verified** only when a validator runs with external search, reports confirmation, and returns usable source metadata. Internal agent agreement alone is labeled **Unverified**.
 
-Veritas moves beyond simple "chatbot" interactions by implementing a rigorous debate protocol:
+## Reasoning modes
 
-1.  **Analyst (Data Core)**: Performs deep searches, gathers raw data, and constructs an initial factual hypothesis based on verified sources.
-2.  **Skeptic (Auditor)**: Adversarially attacks the Analyst's output. It looks for logical fallacies, unsupported claims, and context errors. It *wants* to find a flaw.
-3.  **Judge (Veritas Final)**: Synthesizes the debate. If the Skeptic finds a flaw, the Analyst must refine their answer. The Judge only issues a verdict when consensus is reached or the truth is synthesized from the conflict.
-4.  **Validator (Optional)**: A final automated check that performs an independent search to verify the Judge's specific claims before rendering text.
+### Standard debate
 
-## ✨ Key Features
+1. **Analyst** resolves the user's intent, gathers available evidence, and creates a draft.
+2. **Skeptic** tests the draft for false premises, unsupported claims, stale facts, and logical gaps.
+3. **Judge** synthesizes the debate and marks the answer inconclusive when the evidence is insufficient.
+4. **Validator** is optional. In the `VERIFIED` preset it performs a separate source-backed check.
 
-*   **Recursive Reasoning Loops**: Agents debate in rounds (default: 3) to refine accuracy.
-*   **Gemini 3 Pro + Thinking**: Utilizes the latest Gemini 3 models with "Thinking" budgets for deep logical inference.
-*   **Search Grounding**: Integrated with Google Search to anchor claims in real-time reality.
-*   **Text-to-Speech (TTS)**: The final verdict is spoken aloud using `gemini-2.5-flash-tts` for an immersive briefing experience.
-*   **Custom Workflows**: Define linear chains (e.g., Ideator -> Writer -> Editor) for creative tasks.
-*   **Agent Interrogation**: Interrupt the process to "speak" directly to a specific agent about their internal state or logic (`@AgentName: query`).
-*   **Cinematic UI**: A "High-Tech/Low-Life" Cyberpunk terminal interface with CRT effects, sound FX, and reactive visualizations.
+### Custom workflows
 
-## 🛠️ Tech Stack
+Custom workflows can connect one or more agents in a linear sequence. Workflow output is intentionally labeled **Unverified** unless a future workflow adds an explicit evidence-validation stage.
 
-*   **Frontend**: React 19, TypeScript
-*   **Styling**: Tailwind CSS (Custom "Veritas" Design System)
-*   **AI Engine**: `@google/genai` SDK
-    *   Reasoning: `gemini-3-pro-preview`
-    *   TTS: `gemini-2.5-flash-preview-tts`
-*   **State**: Custom React Hooks (`useReasoningEngine`, `useCommandTerminal`)
+### Agent diagnostics
 
-## 🚀 Getting Started
+Use `@AgentName: question` to ask an agent about its role, configuration, or previous output. Diagnostic answers are not independently validated.
 
-1.  **Environment Setup**:
-    Ensure your `process.env.API_KEY` is set with a valid Google Cloud Project API key that has access to Gemini 3 models.
+## Evidence statuses
 
-2.  **Run the Application**:
-    The application is built as a standard React app.
-    ```bash
-    npm install
-    npm start
-    ```
+| Status | Meaning |
+|---|---|
+| `verified` | A source-backed validator confirmed the answer and returned external source metadata. |
+| `corrected` | A source-backed validator found a material problem, corrected it, and returned external source metadata. |
+| `unverified` | The answer may have internal consensus, but source-backed validation did not complete or was inconclusive. |
+| `disputed` | Material skeptic objections remained unresolved. |
+| `insufficient_evidence` | The judge determined that the available evidence was not conclusive. |
 
-3.  **Configuration**:
-    Click the `CFG` button in the header to open the System Configuration Editor. You can modify agent personas, debate rules, or create entirely new agent swarms.
+The validator can explicitly return `UNVERIFIED` when evidence is missing, contradictory, or too weak. The verdict card shows consensus, validator execution, source-check status, source count, provider, model, warnings, and safe validation links. It never displays “Authenticity Verified” merely because agents agreed.
 
-## 📂 Project Structure
+## Providers
 
-The project follows a feature-based architecture:
+Veritas currently supports:
 
-*   `features/reasoning/`: Core logic for the agent engine.
-    *   `services/`:
-        *   `geminiService.ts`: The Orchestrator managing the debate flow.
-        *   `geminiCore.ts`: Low-level API pipe (retry logic, JSON parsing).
-        *   `schemas.ts`: Strict JSON schemas for agent outputs.
-        *   `prompts.ts`: System instructions for Analyst, Skeptic, etc.
-    *   `components/`: UI components for the terminal log, agent cards, and header.
-    *   `hooks/`: Custom hooks for sound, speech, and state management.
+- **Gemini** through `@google/genai`
+- **OpenRouter** through its Chat Completions API
 
-## 🎛️ Usage Guide
+The default reasoning model is pinned to `gemini-3.6-flash` rather than a moving `latest` alias.
 
-*   **Standard Mode**: Type a query and hit EXECUTE. Watch the agents debate.
-*   **Interrogation**: Type `@DATA_CORE_01: Why did you cite that source?` to query an agent directly.
-*   **Presets**: Use the presets (Academic, Creative, Story Chain) to instantly swap the "Cognitive Personality" of the system.
-*   **Export**: Press `Ctrl+E` to download the entire debate transcript as JSON.
+Provider keys are separate. A Gemini key is never used as an OpenRouter fallback, and vice versa. OpenRouter currently uses strict JSON Schema output, but its adapter does not yet implement Veritas web-search grounding. Validator runs are therefore skipped and clearly marked when OpenRouter is selected.
 
----
-*Built with radical intent.*
+## API-key security
+
+This repository is currently a client-only BYOK application. Keys entered in the configuration editor are stored in the current browser profile's `localStorage`.
+
+- Do not use this mode on shared or untrusted devices.
+- Do not place provider keys in Vite environment variables for a hosted build.
+- Production deployments should move provider calls and keys to a server-side API or backend-for-frontend.
+- Use the **Forget** action in the configuration editor to remove a saved key.
+
+## Reliability safeguards
+
+The correctness foundation includes:
+
+- runtime validation for every model response;
+- rejection of malformed or truncated JSON instead of heuristic “healing”;
+- full original-query, draft, debate-history, critique, and correction context during analyst revisions;
+- source metadata required at the outcome layer before a result can be labeled verified or corrected;
+- safe `http`/`https` citation normalization and duplicate removal;
+- variable-agent configuration validation with case-insensitive references;
+- explicit cancellation state and abortable retry delays;
+- provider capability checks and visible warnings;
+- no hidden-chain-of-thought display—the UI presents concise evidence, debate, validation, or work summaries instead.
+
+## Tech stack
+
+- React 19
+- TypeScript
+- Vite
+- Tailwind CSS runtime configuration
+- `@google/genai`
+- Browser Web Speech and Web Audio APIs
+
+## Getting started
+
+### 1. Install dependencies
+
+Node.js 20 or newer is recommended for the current SDK dependency tree.
+
+```bash
+npm install
+```
+
+### 2. Start development mode
+
+```bash
+npm run dev
+```
+
+Open the local URL shown by Vite, then open **CFG** and add the provider key you intend to use.
+
+### 3. Validate the project
+
+```bash
+npm run typecheck
+npm test
+npm run build
+```
+
+The regression suite verifies configuration flexibility, case-insensitive references, provider-key isolation, malformed-response rejection, safe source handling, abortable retries, full revision context, and truthful verdict transitions.
+
+## Configuration rules
+
+Standard debate mode requires agents with these roles:
+
+- `analyst`
+- `skeptic`
+- `judge`
+
+Additional agents, including `validator`, are allowed. The built-in `VERIFIED` preset contains four agents.
+
+Workflow mode allows a variable number of agents. Every workflow step must reference an existing unique agent name, and workflow step IDs must also be unique.
+
+Provider configuration example:
+
+```json
+{
+  "provider": {
+    "type": "gemini",
+    "model": "gemini-3.6-flash"
+  }
+}
+```
+
+Legacy saved configurations without a provider are migrated to the default Gemini provider during validation.
+
+## Project structure
+
+```text
+features/reasoning/
+├── components/          agent, log, verdict, configuration, and control UI
+├── hooks/               reasoning state, command history, voice, speech, and sound
+├── services/
+│   ├── geminiService.ts orchestration for debate, workflows, and diagnostics
+│   ├── *Core.ts         provider adapters
+│   ├── prompts.ts       role and task instructions
+│   ├── schemas.ts       structured-output schemas
+│   └── *Utils.ts        keys, outcomes, runtime, sources, aborts, and strict JSON
+├── validation/          runtime configuration and model-response validation
+├── constants.ts         built-in presets
+└── types.ts             shared contracts and evidence-status types
+```
+
+## Current limitations
+
+- The application is client-only; hosted production deployments need a server-side key boundary.
+- OpenRouter web-search grounding is not implemented in the current adapter.
+- Confidence values shown for analyst outputs are model estimates and explicitly labeled uncalibrated.
+- Multi-agent agreement is not independent proof when all agents use the same provider and model.
+- Source metadata proves that a source was returned, not automatically that every claim is supported; claim-level citation mapping is planned for the next verification phase.
+- Tailwind is still loaded at runtime; a compiled Tailwind build is planned for a later performance-focused change.
+
+## Keyboard shortcuts
+
+- `Enter`: execute
+- `Shift+Enter`: insert a new line
+- `Ctrl/Cmd + K`: clear context
+- `Ctrl/Cmd + E`: export the transcript
+- `Ctrl + Up/Down`: navigate command history
