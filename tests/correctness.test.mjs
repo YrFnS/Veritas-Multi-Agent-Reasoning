@@ -19,6 +19,10 @@ import {
 } from '../.test-dist/features/reasoning/services/providerKeys.js';
 import { buildStandardOutcome } from '../.test-dist/features/reasoning/services/reasoningOutcome.js';
 import {
+  buildVerifiedClaim,
+  summarizeClaimVerification,
+} from '../.test-dist/features/reasoning/services/claimVerification.js';
+import {
   createWebSource,
   dedupeSources,
 } from '../.test-dist/features/reasoning/services/sourceUtils.js';
@@ -63,6 +67,13 @@ const trustedSource = {
     uri: 'https://example.com/evidence',
     title: 'Evidence',
   },
+};
+
+const materialClaim = {
+  id: 'C1',
+  text: 'The answer contains a checkable factual claim.',
+  importance: 'primary',
+  verifiable: true,
 };
 
 test('standard config accepts an optional fourth validator agent', () => {
@@ -134,7 +145,17 @@ test('configuration rejects duplicate agent names and unknown workflow agents', 
   assert.match(unknownWorkflowAgent.errors.join('\n'), /unknown agent/i);
 });
 
-test('confirmed validation needs an attached external source to be verified', () => {
+test('confirmed validation needs claim-linked external evidence to be verified', () => {
+  const supportedClaim = buildVerifiedClaim(
+    materialClaim,
+    {
+      status: 'SUPPORTED',
+      rationale: 'The evidence supports the claim.',
+      corrected_claim: '',
+    },
+    [trustedSource]
+  );
+  const claimSummary = summarizeClaimVerification([supportedClaim]);
   const verified = buildStandardOutcome({
     answer: 'Answer',
     consensusReached: true,
@@ -142,28 +163,41 @@ test('confirmed validation needs an attached external source to be verified', ()
     verificationStatus: 'CONFIRMED',
     isConclusive: true,
     roundsExecuted: 1,
-    sources: [trustedSource],
+    claims: [supportedClaim],
+    claimSummary,
     provider: 'gemini',
     model: 'gemini-3.6-flash',
   });
-  const noSource = buildStandardOutcome({
+  const noClaimEvidence = buildStandardOutcome({
     answer: 'Answer',
     consensusReached: true,
     validatorRan: true,
     verificationStatus: 'CONFIRMED',
     isConclusive: true,
     roundsExecuted: 1,
+    sources: [trustedSource],
     provider: 'gemini',
     model: 'gemini-3.6-flash',
   });
 
   assert.equal(verified.status, 'verified');
   assert.equal(verified.sources.length, 1);
-  assert.equal(noSource.status, 'unverified');
-  assert.match(noSource.warnings.join('\n'), /downgraded/i);
+  assert.equal(verified.claimSummary.citationCoverage, 100);
+  assert.equal(noClaimEvidence.status, 'unverified');
+  assert.match(noClaimEvidence.warnings.join('\n'), /downgraded/i);
 });
 
-test('source-backed corrections are labeled corrected', () => {
+test('claim-linked source-backed corrections are labeled corrected', () => {
+  const correctedClaim = buildVerifiedClaim(
+    materialClaim,
+    {
+      status: 'CONTRADICTED',
+      rationale: 'The original claim was wrong.',
+      corrected_claim: 'The corrected factual claim.',
+    },
+    [trustedSource]
+  );
+  const claimSummary = summarizeClaimVerification([correctedClaim]);
   const outcome = buildStandardOutcome({
     answer: 'Corrected answer',
     consensusReached: false,
@@ -171,12 +205,14 @@ test('source-backed corrections are labeled corrected', () => {
     verificationStatus: 'CORRECTED',
     isConclusive: true,
     roundsExecuted: 3,
-    sources: [trustedSource],
+    claims: [correctedClaim],
+    claimSummary,
     provider: 'gemini',
     model: 'gemini-3.6-flash',
   });
 
   assert.equal(outcome.status, 'corrected');
+  assert.equal(outcome.claims[0].status, 'contradicted');
 });
 
 test('inconclusive evidence takes precedence over a verification label', () => {
