@@ -1,259 +1,305 @@
-
-import { useState, useCallback, useRef } from 'react';
-import { SystemConfig, LogEntry, ProcessState, ChatHistoryItem, AgentConfig } from '../types';
+import { useCallback, useRef, useState } from 'react';
+import { ProcessState } from '../types';
+import type {
+  AgentConfig,
+  ChatHistoryItem,
+  LogEntry,
+  ReasoningOutcome,
+  SystemConfig,
+} from '../types';
 import { MultiAgentService } from '../services/geminiService';
 
-const uuid = () => Math.random().toString(36).substring(2, 9);
+const uuid = () =>
+  globalThis.crypto?.randomUUID?.() ??
+  `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 
 export const useReasoningEngine = (config: SystemConfig) => {
   const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [processState, setProcessState] = useState<ProcessState>(ProcessState.IDLE);
+  const [processState, setProcessState] = useState<ProcessState>(
+    ProcessState.IDLE
+  );
   const [activeAgentName, setActiveAgentName] = useState<string | null>(null);
-  const [finalResult, setFinalResult] = useState<string | null>(null);
+  const [finalResult, setFinalResult] = useState<ReasoningOutcome | null>(null);
   const [chatHistory, setChatHistory] = useState<ChatHistoryItem[]>([]);
-  const [currentRound, setCurrentRound] = useState<number>(0);
-  
+  const [currentRound, setCurrentRound] = useState(0);
+
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  // Helper to add logs efficiently
   const addLog = useCallback((log: LogEntry) => {
-      setLogs(prev => {
-          // Remove previous thinking log from same agent to prevent clutter
-          const filtered = prev.filter(l => !(l.agentRole === log.agentRole && l.isThinking));
-          return [...filtered, log];
-      });
+    setLogs((previous) => {
+      const filtered = previous.filter(
+        (item) => !(item.agentRole === log.agentRole && item.isThinking)
+      );
+      return [...filtered, log];
+    });
   }, []);
 
   const addWorkflowLog = useCallback((log: LogEntry) => {
-      setLogs(prev => {
-          const filtered = prev.filter(l => !(l.agentName === log.agentName && l.isThinking));
-          return [...filtered, log];
-      });
+    setLogs((previous) => {
+      const filtered = previous.filter(
+        (item) => !(item.agentName === log.agentName && item.isThinking)
+      );
+      return [...filtered, log];
+    });
   }, []);
 
-  // --- SUB-HANDLERS ---
-
   const handleInterrogation = async (
-      service: MultiAgentService, 
-      targetAgent: AgentConfig, 
-      query: string, 
-      chatHistory: ChatHistoryItem[]
+    service: MultiAgentService,
+    targetAgent: AgentConfig,
+    query: string,
+    originalPrompt: string,
+    history: ChatHistoryItem[],
+    signal: AbortSignal
   ) => {
-      setProcessState(ProcessState.INTERROGATION);
-      setActiveAgentName(targetAgent.name);
-      
-      const result = await service.runAgentInspection(
-          targetAgent,
-          query,
-          config,
-          chatHistory,
-          addLog
-      );
-      
-      setFinalResult(result);
-      setProcessState(ProcessState.COMPLETE);
-      setActiveAgentName(null);
+    setProcessState(ProcessState.INTERROGATION);
+    setActiveAgentName(targetAgent.name);
+
+    const outcome = await service.runAgentInspection(
+      targetAgent,
+      query,
+      config,
+      history,
+      addLog,
+      signal
+    );
+    if (signal.aborted) throw new Error('ABORT_SEQUENCE_RECEIVED');
+
+    setFinalResult(outcome);
+    setProcessState(ProcessState.COMPLETE);
+    setActiveAgentName(null);
+    setChatHistory((previous) => [
+      ...previous,
+      { role: 'user', content: originalPrompt },
+      { role: 'model', content: outcome.answer },
+    ]);
   };
 
   const handleWorkflow = async (
-      service: MultiAgentService,
-      userPrompt: string,
-      chatHistory: ChatHistoryItem[],
-      signal: AbortSignal
+    service: MultiAgentService,
+    userPrompt: string,
+    history: ChatHistoryItem[],
+    signal: AbortSignal
   ) => {
-      setProcessState(ProcessState.WORKFLOW_RUNNING);
-          
-      const result = await service.runCustomChain(
-          userPrompt,
-          config,
-          chatHistory,
-          (log) => {
-              addWorkflowLog(log);
-              if (log.isThinking) setActiveAgentName(log.agentName);
-          },
-          signal
-      );
-      
-      setFinalResult(result);
-      setProcessState(ProcessState.COMPLETE);
-      setActiveAgentName(null);
-      
-      const verdictLog: LogEntry = {
-          id: uuid(),
-          agentRole: 'verdict',
-          agentName: 'WORKFLOW_COMPLETE',
-          content: result,
-          timestamp: Date.now()
-      };
-      setLogs(prev => [...prev, verdictLog]);
+    setProcessState(ProcessState.WORKFLOW_RUNNING);
 
-      setChatHistory(prev => [
-        ...prev,
-        { role: 'user', content: userPrompt },
-        { role: 'model', content: result }
-      ]);
+    const outcome = await service.runCustomChain(
+      userPrompt,
+      config,
+      history,
+      (log) => {
+        addWorkflowLog(log);
+        if (log.isThinking) setActiveAgentName(log.agentName);
+      },
+      signal
+    );
+    if (signal.aborted) throw new Error('ABORT_SEQUENCE_RECEIVED');
+
+    setFinalResult(outcome);
+    setProcessState(ProcessState.COMPLETE);
+    setActiveAgentName(null);
+    setLogs((previous) => [
+      ...previous,
+      {
+        id: uuid(),
+        agentRole: 'verdict',
+        agentName: 'WORKFLOW_COMPLETE',
+        content: outcome.answer,
+        timestamp: Date.now(),
+        metadata: { outcome },
+        sources: outcome.sources,
+      },
+    ]);
+    setChatHistory((previous) => [
+      ...previous,
+      { role: 'user', content: userPrompt },
+      { role: 'model', content: outcome.answer },
+    ]);
   };
 
   const handleStandardDebate = async (
-      service: MultiAgentService,
-      userPrompt: string,
-      chatHistory: ChatHistoryItem[],
-      signal: AbortSignal
+    service: MultiAgentService,
+    userPrompt: string,
+    history: ChatHistoryItem[],
+    signal: AbortSignal
   ) => {
-      const result = await service.runReasoningChain(
-        userPrompt, 
-        config, 
-        chatHistory,
-        (log) => {
-          addLog(log);
-          if (log.isThinking) {
-             setActiveAgentName(log.agentName);
-             const stateMap: Record<string, ProcessState> = {
-               'analyst': ProcessState.ANALYZING,
-               'skeptic': ProcessState.AUDITING,
-               'judge': ProcessState.JUDGING,
-               'validator': ProcessState.VALIDATING
-             };
-             if (stateMap[log.agentRole]) setProcessState(stateMap[log.agentRole]);
-          }
-        },
-        (round) => setCurrentRound(round),
-        signal
-      );
+    const outcome = await service.runReasoningChain(
+      userPrompt,
+      config,
+      history,
+      (log) => {
+        addLog(log);
+        if (!log.isThinking) return;
 
-      setFinalResult(result);
-      setProcessState(ProcessState.COMPLETE);
-      setActiveAgentName(null);
+        setActiveAgentName(log.agentName);
+        const stateMap: Record<string, ProcessState> = {
+          analyst: ProcessState.ANALYZING,
+          skeptic: ProcessState.AUDITING,
+          judge: ProcessState.JUDGING,
+          validator: ProcessState.VALIDATING,
+        };
+        const nextState = stateMap[log.agentRole.toLowerCase()];
+        if (nextState) setProcessState(nextState);
+      },
+      setCurrentRound,
+      signal
+    );
+    if (signal.aborted) throw new Error('ABORT_SEQUENCE_RECEIVED');
 
-      const verdictLog: LogEntry = {
-          id: uuid(),
-          agentRole: 'verdict',
-          agentName: 'VERITAS_FINAL',
-          content: result,
-          timestamp: Date.now()
-      };
-      setLogs(prev => [...prev, verdictLog]);
-
-      setChatHistory(prev => [
-        ...prev,
-        { role: 'user', content: userPrompt },
-        { role: 'model', content: result }
-      ]);
+    setFinalResult(outcome);
+    setProcessState(ProcessState.COMPLETE);
+    setActiveAgentName(null);
+    setLogs((previous) => [
+      ...previous,
+      {
+        id: uuid(),
+        agentRole: 'verdict',
+        agentName: 'VERITAS_FINAL',
+        content: outcome.answer,
+        timestamp: Date.now(),
+        metadata: { outcome },
+        sources: outcome.sources,
+      },
+    ]);
+    setChatHistory((previous) => [
+      ...previous,
+      { role: 'user', content: userPrompt },
+      { role: 'model', content: outcome.answer },
+    ]);
   };
 
-  // --- MAIN ENTRY POINT ---
+  const startReasoning = useCallback(
+    async (userPrompt: string) => {
+      abortControllerRef.current?.abort();
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
 
-    const startReasoning = useCallback(async (userPrompt: string) => {
-    // Abort previous if exists (though UI prevents this, safe to check)
-    if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-    }
-    const controller = new AbortController();
-    abortControllerRef.current = controller;
+      setProcessState(ProcessState.ANALYZING);
+      setFinalResult(null);
+      setCurrentRound(0);
+      setActiveAgentName(null);
 
-    setProcessState(ProcessState.ANALYZING);
-    setFinalResult(null);
-    setCurrentRound(0);
-    setActiveAgentName(null);
-
-    // Initial User Log
-    const userLog: LogEntry = {
+      const userLog: LogEntry = {
         id: uuid(),
         agentRole: 'user',
         agentName: 'OPERATOR',
         content: userPrompt,
-        timestamp: Date.now()
-    };
-    
-    setLogs(prev => {
-        const newLogs = [...prev];
-        if (prev.length > 0) {
-           newLogs.push({
-             id: `sep-${Date.now()}`,
-             agentRole: 'system',
-             agentName: 'SYSTEM',
-             content: 'NEW_CYCLE_INITIATED',
-             timestamp: Date.now()
-           });
+        timestamp: Date.now(),
+      };
+
+      setLogs((previous) => {
+        const next = [...previous];
+        if (previous.length > 0) {
+          next.push({
+            id: uuid(),
+            agentRole: 'system',
+            agentName: 'SYSTEM',
+            content: 'NEW_CYCLE_INITIATED',
+            timestamp: Date.now(),
+          });
         }
-        return [...newLogs, userLog];
-    });
+        next.push(userLog);
+        return next;
+      });
 
-    // Keys are managed by MultiAgentService internally or retrieved from config/localstorage
-    const service = new MultiAgentService();
+      const service = new MultiAgentService();
 
-    try {
-      // 1. Interrogation Check
-      const interrogationMatch = userPrompt.match(/^@([\w_]+):\s*(.+)/i);
-      if (interrogationMatch) {
-         const targetName = interrogationMatch[1];
-         const query = interrogationMatch[2];
-         const targetAgent = config.agents.find(a => 
-             a.name.toLowerCase() === targetName.toLowerCase() || 
-             a.role.toLowerCase() === targetName.toLowerCase()
-         );
+      try {
+        const interrogationMatch = userPrompt.match(/^@([\w_]+):\s*(.+)/i);
+        if (interrogationMatch) {
+          const targetName = interrogationMatch[1];
+          const query = interrogationMatch[2];
+          const targetAgent = config.agents.find(
+            (agent) =>
+              agent.name.toLowerCase() === targetName.toLowerCase() ||
+              agent.role.toLowerCase() === targetName.toLowerCase()
+          );
 
-         if (targetAgent) {
-             await handleInterrogation(service, targetAgent, query, chatHistory);
-             abortControllerRef.current = null;
-             return;
-         }
-      }
+          if (targetAgent) {
+            await handleInterrogation(
+              service,
+              targetAgent,
+              query,
+              userPrompt,
+              chatHistory,
+              controller.signal
+            );
+            return;
+          }
+        }
 
-      // 2. Custom Workflow Check
-      if (config.workflow && config.workflow.length > 0) {
-          await handleWorkflow(service, userPrompt, chatHistory, controller.signal);
-          abortControllerRef.current = null;
+        if (config.workflow?.length) {
+          await handleWorkflow(
+            service,
+            userPrompt,
+            chatHistory,
+            controller.signal
+          );
           return;
-      }
+        }
 
-      // 3. Standard Debate
-      await handleStandardDebate(service, userPrompt, chatHistory, controller.signal);
-      abortControllerRef.current = null;
+        await handleStandardDebate(
+          service,
+          userPrompt,
+          chatHistory,
+          controller.signal
+        );
+      } catch (error) {
+        if (abortControllerRef.current !== controller) return;
 
-    } catch (e: any) {
-      if (e.message === 'ABORT_SEQUENCE_RECEIVED') {
-          console.log("Process aborted by user");
+        const message =
+          error instanceof Error ? error.message : 'Unknown reasoning failure.';
+
+        if (message === 'ABORT_SEQUENCE_RECEIVED') {
+          setProcessState(ProcessState.CANCELLED);
+          setActiveAgentName(null);
+          setLogs((previous) => [
+            ...previous,
+            {
+              id: uuid(),
+              agentRole: 'system',
+              agentName: 'SYSTEM',
+              content: 'PROCESS CANCELLED BY USER',
+              timestamp: Date.now(),
+            },
+          ]);
+        } else {
+          console.error(error);
           setProcessState(ProcessState.ERROR);
           setActiveAgentName(null);
-          setLogs(prev => [...prev, {
-            id: 'ABORT', 
-            agentRole: 'system', 
-            agentName: 'SYSTEM', 
-            content: 'PROCESS TERMINATED BY USER', 
-            timestamp: Date.now()
-          }]);
-      } else {
-          console.error(e);
-          setProcessState(ProcessState.ERROR);
-          setActiveAgentName(null);
-          setLogs(prev => [...prev, {
-            id: 'ERR', 
-            agentRole: 'judge', 
-            agentName: 'SYSTEM', 
-            content: 'CRITICAL FAILURE: ' + (e as Error).message, 
-            timestamp: Date.now()
-          }]);
+          setLogs((previous) => [
+            ...previous,
+            {
+              id: uuid(),
+              agentRole: 'system',
+              agentName: 'SYSTEM',
+              content: `CRITICAL FAILURE: ${message}`,
+              timestamp: Date.now(),
+            },
+          ]);
+        }
+      } finally {
+        if (abortControllerRef.current === controller) {
+          abortControllerRef.current = null;
+        }
       }
-    }
-  }, [config, chatHistory, addLog, addWorkflowLog]);
+    },
+    [config, chatHistory, addLog, addWorkflowLog]
+  );
 
   const stopReasoning = useCallback(() => {
-      if (abortControllerRef.current) {
-          abortControllerRef.current.abort();
-          abortControllerRef.current = null;
-      }
+    abortControllerRef.current?.abort();
   }, []);
 
   const clearMemory = useCallback(() => {
-    stopReasoning();
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
     setChatHistory([]);
     setLogs([]);
     setFinalResult(null);
     setProcessState(ProcessState.IDLE);
     setCurrentRound(0);
     setActiveAgentName(null);
-  }, [stopReasoning]);
+  }, []);
 
   return {
     logs,
@@ -264,6 +310,6 @@ export const useReasoningEngine = (config: SystemConfig) => {
     currentRound,
     startReasoning,
     stopReasoning,
-    clearMemory
+    clearMemory,
   };
 };
