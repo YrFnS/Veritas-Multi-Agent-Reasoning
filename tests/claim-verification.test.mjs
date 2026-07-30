@@ -99,6 +99,53 @@ test('source-less support is downgraded instead of being presented as verified',
   assert.match(claim.rationale, /downgraded/i);
 });
 
+test('source-less contradictions cannot leak an unsupported correction', () => {
+  const claim = buildVerifiedClaim(
+    extractedClaim({ text: 'Gold has atomic number 80.' }),
+    {
+      status: 'CONTRADICTED',
+      rationale: 'The model proposed a correction without attached evidence.',
+      corrected_claim: 'Gold has atomic number 79.',
+    },
+    []
+  );
+
+  assert.equal(claim.status, 'not_found');
+  assert.equal(claim.correctedText, undefined);
+  assert.equal(isClaimVerificationConclusive([claim]), false);
+});
+
+test('non-verifiable source metadata cannot inflate citation coverage', () => {
+  const supported = buildVerifiedClaim(
+    extractedClaim(),
+    {
+      status: 'SUPPORTED',
+      rationale: 'Supported by an external reference.',
+      corrected_claim: '',
+    },
+    [source('https://chemistry.example/gold')]
+  );
+  const nonVerifiable = buildVerifiedClaim(
+    extractedClaim({
+      id: 'C2',
+      text: 'Gold is the most beautiful metal.',
+    }),
+    {
+      status: 'NOT_VERIFIABLE',
+      rationale: 'Beauty is a value judgment.',
+      corrected_claim: '',
+    },
+    [source('https://opinion.example/gold')]
+  );
+
+  const summary = summarizeClaimVerification([supported, nonVerifiable]);
+
+  assert.equal(summary.verifiableClaims, 1);
+  assert.equal(summary.claimsWithSources, 1);
+  assert.equal(summary.citationCoverage, 100);
+  assert.equal(summary.independentDomains, 1);
+});
+
 test('claim summaries compute coverage and deterministic verification state', () => {
   const claims = [
     buildVerifiedClaim(
