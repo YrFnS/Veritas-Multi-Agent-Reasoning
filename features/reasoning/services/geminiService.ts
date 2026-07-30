@@ -1,44 +1,60 @@
-
-import { SystemConfig, LogEntry, AgentConfig, ChatHistoryItem, IReasoningCore } from "../types";
-import { generateSystemInstruction, ANALYST_PROMPT, SKEPTIC_PROMPT, JUDGE_PROMPT, VALIDATOR_PROMPT, META_INSPECTION_PROMPT } from "./prompts";
-import { ANALYST_SCHEMA, SKEPTIC_SCHEMA, JUDGE_SCHEMA, VALIDATOR_SCHEMA, GENERIC_STEP_SCHEMA, INSPECTION_SCHEMA } from "./schemas";
-import { GeminiCore } from "./geminiCore";
-import { OpenRouterCore } from "./openRouterCore";
-
-const uuid = () => Math.random().toString(36).substring(2, 9);
-const KEYS_STORAGE_KEY = 'veritas_api_keys';
+import type {
+  AgentConfig,
+  ChatHistoryItem,
+  LogEntry,
+  ReasoningOutcome,
+  SourceMetadata,
+  SystemConfig,
+  VerificationStatus,
+} from '../types.js';
+import {
+  ANALYST_PROMPT,
+  ANALYST_REVISION_PROMPT,
+  JUDGE_PROMPT,
+  META_INSPECTION_PROMPT,
+  SKEPTIC_PROMPT,
+  VALIDATOR_PROMPT,
+  generateSystemInstruction,
+} from './prompts.js';
+import {
+  ANALYST_SCHEMA,
+  GENERIC_STEP_SCHEMA,
+  INSPECTION_SCHEMA,
+  JUDGE_SCHEMA,
+  SKEPTIC_SCHEMA,
+  VALIDATOR_SCHEMA,
+} from './schemas.js';
+import {
+  buildStandardOutcome,
+  buildUnverifiedOutcome,
+} from './reasoningOutcome.js';
+import {
+  buildContextHistory,
+  createLogEntry,
+  createReasoningCore,
+  getProviderConfig,
+  resolveStandardAgents,
+} from './reasoningRuntime.js';
+import { dedupeSources } from './sourceUtils.js';
+import {
+  assertAnalystResponse,
+  assertGenericAgentResponse,
+  assertInspectionResponse,
+  assertJudgeResponse,
+  assertSkepticResponse,
+  assertValidatorResponse,
+} from '../validation/responseValidation.js';
 
 export class MultiAgentService {
-  
-  private getCore(config: SystemConfig): IReasoningCore {
-    const provider = config.provider;
-    if (!provider) throw new Error("INTERNAL_ERROR: No provider configured in system state.");
-    
-    const savedKeys = JSON.parse(localStorage.getItem(KEYS_STORAGE_KEY) || '{}');
-    const apiKey = provider.apiKey || savedKeys[provider.type] || process.env.GEMINI_API_KEY;
-    
-    if (!apiKey && provider.type !== 'gemini') {
-        throw new Error(`CRITICAL: API Key for ${provider.type.toUpperCase()} not found. Provide in Config Editor.`);
+  public async generateSpeech(
+    text: string,
+    config: SystemConfig
+  ): Promise<string> {
+    const core = createReasoningCore(config);
+    if (core.generateSpeech) {
+      return core.generateSpeech(text);
     }
-
-    if (provider.type === 'openrouter') {
-        return new OpenRouterCore(apiKey || "");
-    }
-    return new GeminiCore(apiKey || "");
-  }
-
-  private getModel(config: SystemConfig) {
-    return config.provider?.model || 'gemini-flash-lite-latest';
-  }
-
-  // --- PUBLIC API ---
-
-  public async generateSpeech(text: string, config: SystemConfig): Promise<string> {
-    const core = this.getCore(config);
-    if (core instanceof GeminiCore) {
-        return core.generateSpeech(text);
-    }
-    throw new Error("TTS currently only supported via Gemini provider.");
+    throw new Error('TTS is currently supported only through Gemini.');
   }
 
   public async runCustomChain(
@@ -47,60 +63,102 @@ export class MultiAgentService {
     chatHistory: ChatHistoryItem[],
     onLog: (log: LogEntry) => void,
     signal?: AbortSignal
-  ): Promise<string> {
-    
-    if (!config.workflow || config.workflow.length === 0) {
-        throw new Error("Workflow mode activated but no steps defined.");
+  ): Promise<ReasoningOutcome> {
+    if (!config.workflow?.length) {
+      throw new Error('Workflow mode is active but no steps are defined.');
     }
 
-    const core = this.getCore(config);
-    const model = this.getModel(config);
-
-    const runningHistory = this.buildContextHistory(chatHistory) + `INITIAL USER REQUEST: "${userPrompt}"\n\n=== WORKFLOW START ===\n`;
-    let currentContext = runningHistory;
-    let lastOutput = "";
+    const core = createReasoningCore(config);
+    const provider = getProviderConfig(config);
+    const model = provider.model;
+    let currentContext =
+      buildContextHistory(chatHistory) +
+      `ORIGINAL USER REQUEST: "${userPrompt}"\n\n=== WORKFLOW START ===\n`;
+    let lastOutput = '';
+    const collectedSources: SourceMetadata[] = [];
 
     for (const step of config.workflow) {
-        if (signal?.aborted) throw new Error("ABORT_SEQUENCE_RECEIVED");
+      if (signal?.aborted) throw new Error('ABORT_SEQUENCE_RECEIVED');
 
-        const agentConfig = config.agents.find(a => a.name === step.agentName);
-        if (!agentConfig) {
-            onLog(this.createLog('system', 'SYSTEM', `ERROR: Agent '${step.agentName}' not found. Skipping.`, false));
-            continue;
-        }
-
-        onLog(this.createLog(agentConfig.role, agentConfig.name, `Initializing Step: ${step.name}...`, true));
-
-        const stepPrompt = `
-          CURRENT WORKFLOW STATE:
-          ${currentContext}
-
-          YOUR ASSIGNMENT (${step.name}):
-          ${step.instruction}
-
-          INSTRUCTIONS:
-          1. Review the history to understand the context.
-          2. Execute your specific assignment.
-          3. Output JSON with 'thought_process' and 'output'.
-        `;
-
-        const { data, sources } = await core.generateJSON(
-            model,
-            generateSystemInstruction(agentConfig, config),
-            stepPrompt,
-            GENERIC_STEP_SCHEMA,
-            true,
-            { ...agentConfig, temperature: step.temperature ?? agentConfig.temperature },
-            signal
+      const targetName = step.agentName.toLowerCase();
+      const agentConfig = config.agents.find(
+        (agent) => agent.name.toLowerCase() === targetName
+      );
+      if (!agentConfig) {
+        onLog(
+          createLogEntry(
+            'system',
+            'SYSTEM',
+            `ERROR: Agent '${step.agentName}' was not found. Step skipped.`,
+            false
+          )
         );
+        continue;
+      }
 
-        lastOutput = data.output;
-        currentContext += `\n[STEP: ${step.name} | AGENT: ${agentConfig.name}]:\n${lastOutput}\n`;
+      onLog(
+        createLogEntry(
+          agentConfig.role,
+          agentConfig.name,
+          `Initializing step: ${step.name}...`,
+          true
+        )
+      );
 
-        onLog(this.createLog(agentConfig.role, agentConfig.name, lastOutput, false, data, sources));
+      const stepPrompt = `
+        CURRENT WORKFLOW STATE:
+        ${currentContext}
+
+        YOUR ASSIGNMENT (${step.name}):
+        ${step.instruction}
+
+        Return JSON with a concise 'work_summary' and the final 'output'.
+        Do not expose hidden chain-of-thought.
+      `;
+
+      const response = await core.generateJSON(
+        model,
+        generateSystemInstruction(agentConfig, config),
+        stepPrompt,
+        GENERIC_STEP_SCHEMA,
+        false,
+        {
+          ...agentConfig,
+          temperature: step.temperature ?? agentConfig.temperature,
+        },
+        signal
+      );
+      const data = assertGenericAgentResponse(response.data);
+      collectedSources.push(...(response.sources || []));
+
+      lastOutput = data.output;
+      currentContext += `\n[STEP: ${step.name} | AGENT: ${agentConfig.name}]\n${lastOutput}\n`;
+      onLog(
+        createLogEntry(
+          agentConfig.role,
+          agentConfig.name,
+          lastOutput,
+          false,
+          data,
+          response.sources
+        )
+      );
     }
 
-    return lastOutput;
+    if (!lastOutput) {
+      throw new Error('Workflow completed without producing an output.');
+    }
+
+    return buildUnverifiedOutcome({
+      answer: lastOutput,
+      mode: 'workflow',
+      provider: provider.type,
+      model,
+      sources: collectedSources,
+      warnings: [
+        'Custom workflow output has not been independently validated.',
+      ],
+    });
   }
 
   public async runReasoningChain(
@@ -110,128 +168,256 @@ export class MultiAgentService {
     onLog: (log: LogEntry) => void,
     onRoundUpdate?: (round: number) => void,
     signal?: AbortSignal
-  ): Promise<string> {
-    const analyst = config.agents.find(a => a.role === 'analyst') || config.agents[0];
-    const skeptic = config.agents.find(a => a.role === 'skeptic') || config.agents[1];
-    const judge = config.agents.find(a => a.role === 'judge') || config.agents[2];
-    const validator = config.agents.find(a => a.role === 'validator');
+  ): Promise<ReasoningOutcome> {
+    const { analyst, skeptic, judge, validator } =
+      resolveStandardAgents(config);
 
-    if (!analyst || !skeptic || !judge) {
-        throw new Error("Invalid Configuration: Logic Core requires at least 3 agents defined.");
+    if (signal?.aborted) throw new Error('ABORT_SEQUENCE_RECEIVED');
+
+    const core = createReasoningCore(config);
+    const provider = getProviderConfig(config);
+    const model = provider.model;
+    const warnings: string[] = [];
+
+    if (!core.capabilities.webSearch) {
+      warnings.push(
+        'The selected provider adapter does not provide grounded web search, so source-backed validation is unavailable.'
+      );
     }
+    if (!validator) warnings.push('No validator agent is configured.');
 
-    if (signal?.aborted) throw new Error("ABORT_SEQUENCE_RECEIVED");
-
-    const core = this.getCore(config);
-    const model = this.getModel(config);
-
-    let history = this.buildContextHistory(chatHistory) + `CURRENT USER QUERY: "${userPrompt}"\n`;
-    let currentDraft = "";
+    let history =
+      buildContextHistory(chatHistory) +
+      `ORIGINAL USER QUERY: "${userPrompt}"\n`;
+    let currentDraft = '';
     let consensus = false;
     let roundsExecuted = 0;
 
-    // --- ANALYST (Round 0) ---
-    onLog(this.createLog(analyst.role, analyst.name, "Initializing deep scan...", true));
-    
-    const analystRes = await core.generateJSON(
+    onLog(
+      createLogEntry(
+        analyst.role,
+        analyst.name,
+        'Initializing evidence scan...',
+        true
+      )
+    );
+
+    const analystResponse = await core.generateJSON(
       model,
       generateSystemInstruction(analyst, config),
       ANALYST_PROMPT(history),
       ANALYST_SCHEMA,
-      true,
+      core.capabilities.webSearch,
       analyst,
       signal
     );
+    const analystData = assertAnalystResponse(analystResponse.data);
 
-    currentDraft = analystRes.data.factual_answer;
-    history += `\n[${analyst.name}]: ${currentDraft}\n(Confidence: ${analystRes.data.confidence}%)\n`;
-    
-    onLog(this.createLog(analyst.role, analyst.name, currentDraft, false, analystRes.data, analystRes.sources));
+    currentDraft = analystData.factual_answer;
+    history += `\n[${analyst.name}]\nEvidence summary: ${analystData.evidence_summary}\nDraft: ${currentDraft}\nModel confidence: ${analystData.confidence}%\n`;
+    onLog(
+      createLogEntry(
+        analyst.role,
+        analyst.name,
+        currentDraft,
+        false,
+        analystData,
+        analystResponse.sources
+      )
+    );
 
-    // --- DEBATE LOOP ---
-    for (let i = 1; i <= config.max_rounds; i++) {
-      if (signal?.aborted) throw new Error("ABORT_SEQUENCE_RECEIVED");
-      roundsExecuted = i;
-      if (onRoundUpdate) onRoundUpdate(i);
+    for (let round = 1; round <= config.max_rounds; round += 1) {
+      if (signal?.aborted) throw new Error('ABORT_SEQUENCE_RECEIVED');
+      roundsExecuted = round;
+      onRoundUpdate?.(round);
 
-      // SKEPTIC
-      onLog(this.createLog(skeptic.role, skeptic.name, `Running integrity check (Cycle ${i})...`, true));
-      
-      const skepticRes = await core.generateJSON(
+      onLog(
+        createLogEntry(
+          skeptic.role,
+          skeptic.name,
+          `Running integrity check (cycle ${round})...`,
+          true
+        )
+      );
+
+      const skepticResponse = await core.generateJSON(
         model,
         generateSystemInstruction(skeptic, config),
         SKEPTIC_PROMPT(history, currentDraft),
         SKEPTIC_SCHEMA,
-        true,
+        core.capabilities.webSearch,
         skeptic,
         signal
       );
+      const skepticData = assertSkepticResponse(skepticResponse.data);
 
-      history += `\n[${skeptic.name}]: ${skepticRes.data.analysis}\nFlaws: ${skepticRes.data.flaws.join(", ")}\n`;
-      const skepticLogContent = skepticRes.data.has_flaws ? `OBJECTION: ${skepticRes.data.analysis}` : `AGREEMENT: ${skepticRes.data.analysis}`;
-      onLog(this.createLog(skeptic.role, skeptic.name, skepticLogContent, false, skepticRes.data, skepticRes.sources));
+      history += `\n[${skeptic.name}]\nAnalysis: ${skepticData.analysis}\nFlaws: ${skepticData.flaws.join(', ') || 'None'}\nCorrection: ${skepticData.correction}\n`;
+      onLog(
+        createLogEntry(
+          skeptic.role,
+          skeptic.name,
+          skepticData.has_flaws
+            ? `OBJECTION: ${skepticData.analysis}`
+            : `AGREEMENT: ${skepticData.analysis}`,
+          false,
+          skepticData,
+          skepticResponse.sources
+        )
+      );
 
-      if (!skepticRes.data.has_flaws) {
+      if (!skepticData.has_flaws) {
         consensus = true;
         break;
       }
-      if (i === config.max_rounds) break;
+      if (round === config.max_rounds) break;
 
-      // ANALYST REBUTTAL
-      if (signal?.aborted) throw new Error("ABORT_SEQUENCE_RECEIVED");
-      onLog(this.createLog(analyst.role, analyst.name, "Processing critique & refining...", true));
-      
-      const rebuttalRes = await core.generateJSON(
+      onLog(
+        createLogEntry(
+          analyst.role,
+          analyst.name,
+          'Applying critique and rebuilding the draft...',
+          true
+        )
+      );
+
+      const rebuttalResponse = await core.generateJSON(
         model,
         generateSystemInstruction(analyst, config),
-        `CRITIQUE: ${skepticRes.data.analysis}\nCORRECTION: ${skepticRes.data.correction}\n\nRefine your answer.`,
+        ANALYST_REVISION_PROMPT(
+          userPrompt,
+          currentDraft,
+          history,
+          skepticData.analysis,
+          skepticData.correction
+        ),
         ANALYST_SCHEMA,
-        true,
+        core.capabilities.webSearch,
         analyst,
         signal
       );
+      const rebuttalData = assertAnalystResponse(rebuttalResponse.data);
 
-      currentDraft = rebuttalRes.data.factual_answer;
-      history += `\n[${analyst.name} (Refined)]: ${currentDraft}\n`;
-      onLog(this.createLog(analyst.role, analyst.name, currentDraft, false, rebuttalRes.data, rebuttalRes.sources));
+      currentDraft = rebuttalData.factual_answer;
+      history += `\n[${analyst.name} REVISED]\nEvidence summary: ${rebuttalData.evidence_summary}\nDraft: ${currentDraft}\n`;
+      onLog(
+        createLogEntry(
+          analyst.role,
+          analyst.name,
+          currentDraft,
+          false,
+          rebuttalData,
+          rebuttalResponse.sources
+        )
+      );
     }
 
-    // --- JUDGE ---
-    if (signal?.aborted) throw new Error("ABORT_SEQUENCE_RECEIVED");
-    onLog(this.createLog(judge.role, judge.name, "Compiling final verdict...", true));
-    
-    const judgeRes = await core.generateJSON(
+    if (signal?.aborted) throw new Error('ABORT_SEQUENCE_RECEIVED');
+    onLog(
+      createLogEntry(
+        judge.role,
+        judge.name,
+        'Compiling evidence-calibrated verdict...',
+        true
+      )
+    );
+
+    const judgeResponse = await core.generateJSON(
       model,
       generateSystemInstruction(judge, config),
       JUDGE_PROMPT(history, consensus, roundsExecuted),
       JUDGE_SCHEMA,
-      false, 
+      false,
       judge,
       signal
     );
+    const judgeData = assertJudgeResponse(judgeResponse.data);
 
-    let finalVerdict = judgeRes.data.final_verdict;
-    onLog(this.createLog(judge.role, judge.name, finalVerdict, false, judgeRes.data));
+    let finalVerdict = judgeData.final_verdict;
+    onLog(
+      createLogEntry(
+        judge.role,
+        judge.name,
+        finalVerdict,
+        false,
+        judgeData,
+        judgeResponse.sources
+      )
+    );
 
-    // --- VALIDATOR (Optional) ---
-    if (validator) {
-      if (signal?.aborted) throw new Error("ABORT_SEQUENCE_RECEIVED");
-      onLog(this.createLog(validator.role, validator.name, "Running external fact-check...", true));
-      const validatorRes = await core.generateJSON(
+    let validatorRan = false;
+    let verificationStatus: VerificationStatus = null;
+    let validatorSources: SourceMetadata[] = [];
+
+    if (validator && core.capabilities.webSearch) {
+      if (signal?.aborted) throw new Error('ABORT_SEQUENCE_RECEIVED');
+      onLog(
+        createLogEntry(
+          validator.role,
+          validator.name,
+          'Running source-backed external validation...',
+          true
+        )
+      );
+
+      const validatorResponse = await core.generateJSON(
         model,
         generateSystemInstruction(validator, config),
-        VALIDATOR_PROMPT(finalVerdict),
+        VALIDATOR_PROMPT(userPrompt, finalVerdict),
         VALIDATOR_SCHEMA,
         true,
         validator,
         signal
       );
-      finalVerdict = validatorRes.data.final_output;
-      const statusPrefix = validatorRes.data.verification_status === 'CONFIRMED' ? '✅' : '⚠';
-      onLog(this.createLog(validator.role, validator.name, `${statusPrefix} VERIFICATION COMPLETE: ${validatorRes.data.verification_status}\n\n${finalVerdict}`, false, validatorRes.data, validatorRes.sources));
+      const validatorData = assertValidatorResponse(validatorResponse.data);
+      validatorRan = true;
+      finalVerdict = validatorData.final_output;
+      validatorSources = dedupeSources(validatorResponse.sources);
+      verificationStatus =
+        validatorSources.length > 0
+          ? validatorData.verification_status
+          : 'UNVERIFIED';
+
+      if (validatorSources.length === 0) {
+        warnings.push(
+          'The validator returned no external source metadata, so its result was not labeled verified.'
+        );
+      }
+
+      const statusPrefix =
+        verificationStatus === 'CONFIRMED'
+          ? '✅ SOURCE CHECK CONFIRMED'
+          : verificationStatus === 'CORRECTED'
+            ? '⚠ SOURCE CHECK CORRECTED'
+            : '⚠ SOURCE CHECK UNVERIFIED';
+
+      onLog(
+        createLogEntry(
+          validator.role,
+          validator.name,
+          `${statusPrefix}\n\n${finalVerdict}`,
+          false,
+          validatorData,
+          validatorSources
+        )
+      );
+    } else if (validator) {
+      warnings.push(
+        'The validator was skipped because the selected provider adapter has no web-search capability.'
+      );
     }
 
-    return finalVerdict;
+    return buildStandardOutcome({
+      answer: finalVerdict,
+      consensusReached: consensus,
+      validatorRan,
+      verificationStatus,
+      isConclusive: judgeData.is_conclusive,
+      roundsExecuted,
+      warnings,
+      sources: validatorSources,
+      provider: provider.type,
+      model,
+    });
   }
 
   public async runAgentInspection(
@@ -239,54 +425,50 @@ export class MultiAgentService {
     userQuery: string,
     config: SystemConfig,
     chatHistory: ChatHistoryItem[],
-    onLog: (log: LogEntry) => void
-  ): Promise<string> {
-    const historyBlock = this.buildContextHistory(chatHistory) || "NO PREVIOUS HISTORY";
+    onLog: (log: LogEntry) => void,
+    signal?: AbortSignal
+  ): Promise<ReasoningOutcome> {
+    const historyBlock =
+      buildContextHistory(chatHistory) || 'NO PREVIOUS HISTORY';
 
-    onLog(this.createLog(targetAgent.role, targetAgent.name, `INTERROGATION INTERRUPT: "${userQuery}"`, true));
+    onLog(
+      createLogEntry(
+        targetAgent.role,
+        targetAgent.name,
+        `DIAGNOSTIC QUERY: "${userQuery}"`,
+        true
+      )
+    );
 
-    const core = this.getCore(config);
-    const model = this.getModel(config);
-
-    const response = await core.generateJSON(
-      model,
+    const core = createReasoningCore(config);
+    const provider = getProviderConfig(config);
+    const result = await core.generateJSON(
+      provider.model,
       generateSystemInstruction(targetAgent, config),
       META_INSPECTION_PROMPT(historyBlock, userQuery),
       INSPECTION_SCHEMA,
       false,
-      targetAgent
+      targetAgent,
+      signal
+    );
+    const data = assertInspectionResponse(result.data);
+
+    onLog(
+      createLogEntry(
+        targetAgent.role,
+        targetAgent.name,
+        `DIAGNOSTIC OUTPUT:\n${data.response}\n\n[STATUS: ${data.internal_state}]`,
+        false,
+        { work_summary: 'Direct diagnostic query outside the debate pipeline.' }
+      )
     );
 
-    const logContent = `DIAGNOSTIC OUTPUT:\n${response.data.response}\n\n[STATUS: ${response.data.internal_state}]`;
-    onLog(this.createLog(targetAgent.role, targetAgent.name, logContent, false, { thought_process: "Direct operator query bypassed standard logic." }));
-
-    return response.data.response;
-  }
-
-  private buildContextHistory(chatHistory: ChatHistoryItem[]): string {
-    if (chatHistory.length === 0) return "";
-    return "PREVIOUS CONVERSATION HISTORY:\n" + chatHistory.map(turn => 
-        `${turn.role === 'user' ? 'USER' : 'SYSTEM'}: ${turn.content}`
-    ).join("\n") + "\n\n";
-  }
-
-  private createLog(
-    role: any, 
-    name: string, 
-    content: string, 
-    isThinking: boolean, 
-    metadata?: any, 
-    sources?: any[]
-  ): LogEntry {
-    return {
-      id: uuid(),
-      agentRole: role,
-      agentName: name,
-      content,
-      isThinking,
-      timestamp: Date.now(),
-      metadata,
-      sources
-    };
+    return buildUnverifiedOutcome({
+      answer: data.response,
+      mode: 'interrogation',
+      provider: provider.type,
+      model: provider.model,
+      warnings: ['Diagnostic responses are not independently validated.'],
+    });
   }
 }
