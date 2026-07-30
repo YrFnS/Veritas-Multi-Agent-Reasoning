@@ -1,7 +1,11 @@
-
-import React, { useState, useEffect } from 'react';
-import { SystemConfig } from '../types';
+import React, { useEffect, useState } from 'react';
+import type { ProviderType, SystemConfig } from '../types';
 import { PRESETS } from '../constants';
+import {
+  validateAndNormalizeSystemConfig,
+} from '../validation/configValidation.js';
+import { readProviderKeys, writeProviderKey } from '../services/providerKeys.js';
+import type { ProviderKeyMap } from '../services/providerKeys.js';
 
 interface ConfigEditorProps {
   config: SystemConfig;
@@ -10,53 +14,65 @@ interface ConfigEditorProps {
 }
 
 const CUSTOM_PRESETS_KEY = 'veritas_custom_presets';
-const KEYS_STORAGE_KEY = 'veritas_api_keys';
 
-export const ConfigEditor: React.FC<ConfigEditorProps> = ({ config, onSave, onClose }) => {
+export const ConfigEditor: React.FC<ConfigEditorProps> = ({
+  config,
+  onSave,
+  onClose,
+}) => {
   const [jsonText, setJsonText] = useState(JSON.stringify(config, null, 2));
   const [error, setError] = useState<string | null>(null);
-  const [customPresets, setCustomPresets] = useState<Record<string, SystemConfig>>({});
+  const [customPresets, setCustomPresets] = useState<
+    Record<string, SystemConfig>
+  >({});
   const [newPresetName, setNewPresetName] = useState('');
-  
-  // API Keys state
-  const [apiKeys, setApiKeys] = useState<Record<string, string>>(() => {
-    try {
-      return JSON.parse(localStorage.getItem(KEYS_STORAGE_KEY) || '{}');
-    } catch {
-      return {};
-    }
-  });
+  const [apiKeys, setApiKeys] = useState<ProviderKeyMap>(() =>
+    readProviderKeys()
+  );
 
-  // Load custom presets on mount
   useEffect(() => {
     try {
       const stored = localStorage.getItem(CUSTOM_PRESETS_KEY);
       if (stored) {
-        setCustomPresets(JSON.parse(stored));
+        const parsed = JSON.parse(stored) as unknown;
+        if (typeof parsed === 'object' && parsed !== null) {
+          setCustomPresets(parsed as Record<string, SystemConfig>);
+        }
       }
-    } catch (e) {
-      console.error("Failed to load custom presets", e);
+    } catch (loadError) {
+      console.error('Failed to load custom presets.', loadError);
     }
   }, []);
 
+  const parseEditorConfig = (): SystemConfig => {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(jsonText);
+    } catch {
+      throw new Error('Configuration is not valid JSON.');
+    }
+
+    const result = validateAndNormalizeSystemConfig(parsed);
+    if (!result.success || !result.config) {
+      throw new Error(result.errors.join('\n'));
+    }
+    return result.config;
+  };
+
   const handleApply = () => {
     try {
-      const parsed = JSON.parse(jsonText);
-      // Basic validation
-      if (!parsed.agents || !Array.isArray(parsed.agents) || parsed.agents.length !== 3) {
-        throw new Error("Configuration must include exactly 3 agents.");
-      }
-      onSave(parsed);
+      const normalized = parseEditorConfig();
+      onSave(normalized);
       onClose();
-    } catch (e: any) {
-      setError(e.message || "Invalid JSON");
+    } catch (applyError) {
+      setError(
+        applyError instanceof Error ? applyError.message : 'Invalid configuration.'
+      );
     }
   };
 
-  const updateApiKey = (provider: string, key: string) => {
-    const updated = { ...apiKeys, [provider]: key };
-    setApiKeys(updated);
-    localStorage.setItem(KEYS_STORAGE_KEY, JSON.stringify(updated));
+  const updateApiKey = (provider: ProviderType, key: string) => {
+    setApiKeys(writeProviderKey(provider, key));
   };
 
   const handleLoadPreset = (presetConfig: SystemConfig) => {
@@ -66,55 +82,68 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({ config, onSave, onCl
 
   const handleInsertWorkflowTemplate = () => {
     try {
-        const current = JSON.parse(jsonText);
-        const template = {
-            ...current,
-            workflow: [
-                {
-                    "id": "step_1",
-                    "name": "PHASE_1_ANALYSIS",
-                    "agentName": current.agents[0].name,
-                    "instruction": "Analyze the prompt and extract key entities."
-                },
-                {
-                    "id": "step_2",
-                    "name": "PHASE_2_CRITIQUE",
-                    "agentName": current.agents[1].name,
-                    "instruction": "Review the entities from step 1 for accuracy."
-                }
-            ]
-        };
-        setJsonText(JSON.stringify(template, null, 2));
-    } catch (e) {
-        setError("Invalid current JSON. Fix before inserting template.");
+      const current = JSON.parse(jsonText) as SystemConfig;
+      if (!Array.isArray(current.agents) || current.agents.length < 2) {
+        throw new Error('Add at least two agents before inserting a workflow.');
+      }
+
+      const template: SystemConfig = {
+        ...current,
+        max_rounds: 0,
+        workflow: [
+          {
+            id: 'step_1',
+            name: 'PHASE_1_ANALYSIS',
+            agentName: current.agents[0].name,
+            instruction: 'Analyze the prompt and extract the key entities.',
+          },
+          {
+            id: 'step_2',
+            name: 'PHASE_2_CRITIQUE',
+            agentName: current.agents[1].name,
+            instruction: 'Review the previous output for accuracy and omissions.',
+          },
+        ],
+      };
+      setJsonText(JSON.stringify(template, null, 2));
+      setError(null);
+    } catch (templateError) {
+      setError(
+        templateError instanceof Error
+          ? templateError.message
+          : 'Invalid current JSON.'
+      );
     }
   };
 
   const handleSaveCustomPreset = () => {
     try {
-      if (!newPresetName.trim()) throw new Error("Preset name required");
-      
-      const parsed = JSON.parse(jsonText);
-      // Basic validation
-      if (!parsed.agents || !Array.isArray(parsed.agents) || parsed.agents.length !== 3) {
-        throw new Error("Invalid configuration structure. Must have 3 agents.");
+      if (!newPresetName.trim()) {
+        throw new Error('Preset name is required.');
       }
-      
-      // Store in Upper Case for consistency
+
+      const normalized = parseEditorConfig();
       const key = newPresetName.trim().toUpperCase().replace(/\s+/g, '_');
-      
-      const updatedPresets = { ...customPresets, [key]: parsed };
+      const updatedPresets = { ...customPresets, [key]: normalized };
       setCustomPresets(updatedPresets);
-      localStorage.setItem(CUSTOM_PRESETS_KEY, JSON.stringify(updatedPresets));
+      localStorage.setItem(
+        CUSTOM_PRESETS_KEY,
+        JSON.stringify(updatedPresets)
+      );
       setNewPresetName('');
-      setError(null); // Clear errors on success
-    } catch (e: any) {
-      setError(e.message || "Invalid JSON");
+      setError(null);
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error ? saveError.message : 'Invalid configuration.'
+      );
     }
   };
 
-  const handleDeletePreset = (key: string, e: React.MouseEvent) => {
-    e.stopPropagation();
+  const handleDeletePreset = (
+    key: string,
+    event: React.MouseEvent<HTMLButtonElement>
+  ) => {
+    event.stopPropagation();
     const updated = { ...customPresets };
     delete updated[key];
     setCustomPresets(updated);
@@ -124,49 +153,63 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({ config, onSave, onCl
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-sm p-4">
       <div className="w-full max-w-6xl h-[85vh] bg-zinc-950 border border-zinc-700 shadow-2xl flex flex-col md:flex-row overflow-hidden">
-        
-        {/* SIDEBAR: PRESETS */}
         <div className="w-full md:w-64 bg-zinc-900 border-r border-zinc-800 flex flex-col min-h-[200px] md:min-h-0">
           <div className="p-3 border-b border-zinc-800 bg-zinc-950/50">
-            <h3 className="text-zinc-500 font-mono text-xs uppercase tracking-widest">Load Preset</h3>
+            <h3 className="text-zinc-500 font-mono text-xs uppercase tracking-widest">
+              Load Preset
+            </h3>
           </div>
-          
+
           <div className="flex-1 overflow-y-auto p-2 space-y-4">
-            {/* CONNECTIVITY */}
             <div>
-              <div className="text-[10px] text-zinc-600 font-bold mb-2 px-2 uppercase tracking-tighter">Connectivity (Dynamic)</div>
+              <div className="text-[10px] text-zinc-600 font-bold mb-2 px-2 uppercase tracking-tighter">
+                Provider Keys (Browser Local)
+              </div>
               <div className="space-y-4 px-2">
-                 <div className="space-y-1">
-                    <label className="text-[9px] text-zinc-500 font-mono">GEMINI_API_KEY</label>
-                    <input 
+                {(['gemini', 'openrouter'] as ProviderType[]).map((provider) => (
+                  <div className="space-y-1" key={provider}>
+                    <div className="flex items-center justify-between gap-2">
+                      <label className="text-[9px] text-zinc-500 font-mono uppercase">
+                        {provider}_api_key
+                      </label>
+                      {apiKeys[provider] && (
+                        <button
+                          type="button"
+                          onClick={() => updateApiKey(provider, '')}
+                          className="text-[8px] text-zinc-600 hover:text-red-400 font-mono uppercase"
+                        >
+                          Forget
+                        </button>
+                      )}
+                    </div>
+                    <input
                       type="password"
-                      value={apiKeys.gemini || ''}
-                      onChange={(e) => updateApiKey('gemini', e.target.value)}
+                      value={apiKeys[provider] || ''}
+                      onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
+                        updateApiKey(provider, event.target.value)
+                      }
+                      autoComplete="off"
                       className="w-full bg-zinc-950 border border-zinc-800 text-[10px] font-mono text-zinc-400 p-1.5 focus:border-veritas-cyan/50 focus:outline-none"
-                      placeholder="Enter Key..."
+                      placeholder="Enter key..."
                     />
-                 </div>
-                 <div className="space-y-1">
-                    <label className="text-[9px] text-zinc-500 font-mono">OPENROUTER_API_KEY</label>
-                    <input 
-                      type="password"
-                      value={apiKeys.openrouter || ''}
-                      onChange={(e) => updateApiKey('openrouter', e.target.value)}
-                      className="w-full bg-zinc-950 border border-zinc-800 text-[10px] font-mono text-zinc-400 p-1.5 focus:border-veritas-cyan/50 focus:outline-none"
-                      placeholder="Enter Key..."
-                    />
-                 </div>
+                  </div>
+                ))}
+                <p className="text-[9px] text-zinc-700 font-mono leading-relaxed">
+                  Keys remain in this browser profile. Do not use this client-only
+                  mode on shared devices.
+                </p>
               </div>
             </div>
 
-            {/* SYSTEM PRESETS */}
             <div>
-              <div className="text-[10px] text-zinc-600 font-bold mb-2 px-2">SYSTEM DEFAULTS</div>
+              <div className="text-[10px] text-zinc-600 font-bold mb-2 px-2">
+                SYSTEM DEFAULTS
+              </div>
               <div className="space-y-1">
-                {Object.entries(PRESETS).map(([key, val]) => (
+                {Object.entries(PRESETS).map(([key, value]) => (
                   <button
                     key={key}
-                    onClick={() => handleLoadPreset(val as SystemConfig)}
+                    onClick={() => handleLoadPreset(value)}
                     className="w-full text-left px-3 py-2 text-xs font-mono text-zinc-400 hover:bg-zinc-800 hover:text-veritas-cyan transition-colors rounded-sm"
                   >
                     {key}
@@ -175,111 +218,134 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({ config, onSave, onCl
               </div>
             </div>
 
-            {/* CUSTOM PRESETS */}
             <div>
-              <div className="text-[10px] text-zinc-600 font-bold mb-2 px-2">USER ARCHIVES</div>
+              <div className="text-[10px] text-zinc-600 font-bold mb-2 px-2">
+                USER ARCHIVES
+              </div>
               {Object.keys(customPresets).length === 0 && (
-                 <div className="px-3 text-[10px] text-zinc-700 italic">No custom presets saved.</div>
+                <div className="px-3 text-[10px] text-zinc-700 italic">
+                  No custom presets saved.
+                </div>
               )}
               <div className="space-y-1">
-                {Object.entries(customPresets).map(([key, val]) => (
-                  <button
-                    key={key}
-                    onClick={() => handleLoadPreset(val as SystemConfig)}
-                    className="w-full text-left px-3 py-2 text-xs font-mono text-zinc-300 hover:bg-zinc-800 hover:text-veritas-gold transition-colors rounded-sm flex justify-between group"
-                  >
-                    <span>{key}</span>
-                    <span 
-                      onClick={(e) => handleDeletePreset(key, e)}
-                      className="text-zinc-600 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                {Object.entries(customPresets).map(([key, value]) => (
+                  <div key={key} className="flex group">
+                    <button
+                      type="button"
+                      onClick={() => handleLoadPreset(value)}
+                      className="flex-1 text-left px-3 py-2 text-xs font-mono text-zinc-300 hover:bg-zinc-800 hover:text-veritas-gold transition-colors rounded-sm"
+                    >
+                      {key}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(event: React.MouseEvent<HTMLButtonElement>) =>
+                        handleDeletePreset(key, event)
+                      }
+                      aria-label={`Delete preset ${key}`}
+                      className="px-2 text-zinc-600 hover:text-red-500 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity"
                     >
                       ×
-                    </span>
-                  </button>
+                    </button>
+                  </div>
                 ))}
               </div>
             </div>
 
-             {/* SCHEMA DOCS */}
-             <div className="border-t border-zinc-800 mt-2 pt-2">
-               <div className="text-[10px] text-zinc-600 font-bold mb-2 px-2">SCHEMA REFERENCE</div>
-               <div className="px-3 text-[10px] text-zinc-500 space-y-2 font-mono">
-                  <p>Overrides for optimal reasoning:</p>
-                  <ul className="list-disc list-inside opacity-70">
-                    <li><span className="text-veritas-cyan">provider.type</span> ('gemini' | 'openrouter')</li>
-                    <li><span className="text-veritas-cyan">provider.model</span> (e.g. 'gpt-4o')</li>
-                    <li><span className="text-veritas-cyan">thinkingBudget</span> (1024 - 32768)</li>
-                    <li><span className="text-veritas-cyan">temperature</span> (0.0 - 2.0)</li>
-                  </ul>
-                  <button 
-                    onClick={handleInsertWorkflowTemplate}
-                    className="mt-2 w-full text-[9px] border border-zinc-700 hover:bg-zinc-800 py-1 text-veritas-cyan uppercase"
-                  >
-                    + Insert Workflow Template
-                  </button>
-               </div>
+            <div className="border-t border-zinc-800 mt-2 pt-2">
+              <div className="text-[10px] text-zinc-600 font-bold mb-2 px-2">
+                SCHEMA REFERENCE
+              </div>
+              <div className="px-3 text-[10px] text-zinc-500 space-y-2 font-mono">
+                <p>Validation rules:</p>
+                <ul className="list-disc list-inside opacity-70 space-y-1">
+                  <li>Standard mode needs analyst, skeptic, and judge roles.</li>
+                  <li>Validator and additional agents are optional.</li>
+                  <li>Workflow mode supports any positive agent count.</li>
+                  <li>provider.type: gemini or openrouter.</li>
+                  <li>max_rounds: 0–10 (standard mode: at least 1).</li>
+                </ul>
+                <button
+                  onClick={handleInsertWorkflowTemplate}
+                  className="mt-2 w-full text-[9px] border border-zinc-700 hover:bg-zinc-800 py-1 text-veritas-cyan uppercase"
+                >
+                  + Insert Workflow Template
+                </button>
+              </div>
             </div>
-
           </div>
         </div>
 
-        {/* MAIN EDITOR AREA */}
         <div className="flex-1 flex flex-col h-full min-w-0">
           <div className="p-4 border-b border-zinc-800 flex justify-between items-center bg-zinc-950">
-            <h2 className="text-veritas-cyan font-mono text-lg font-bold">SYSTEM_CONFIGURATION.JSON</h2>
-            <button onClick={onClose} className="text-zinc-500 hover:text-white">ESC</button>
+            <h2 className="text-veritas-cyan font-mono text-lg font-bold">
+              SYSTEM_CONFIGURATION.JSON
+            </h2>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close configuration editor"
+              className="text-zinc-500 hover:text-white"
+            >
+              ESC
+            </button>
           </div>
-          
+
           <div className="flex-1 relative bg-black/50">
-             <textarea
+            <textarea
               value={jsonText}
-              onChange={(e) => setJsonText(e.target.value)}
+              onChange={(event: React.ChangeEvent<HTMLTextAreaElement>) =>
+                setJsonText(event.target.value)
+              }
               className="w-full h-full bg-transparent text-zinc-300 font-mono text-sm p-4 resize-none focus:outline-none focus:ring-1 focus:ring-veritas-cyan/30"
               spellCheck={false}
+              aria-label="System configuration JSON"
             />
           </div>
 
           <div className="p-4 border-t border-zinc-800 bg-zinc-900">
-            {error && <div className="text-red-500 font-mono text-xs mb-3 border-l-2 border-red-500 pl-2 py-1 bg-red-950/20">{error}</div>}
-            
+            {error && (
+              <div className="text-red-500 whitespace-pre-wrap font-mono text-xs mb-3 border-l-2 border-red-500 pl-2 py-1 bg-red-950/20 max-h-28 overflow-y-auto">
+                {error}
+              </div>
+            )}
+
             <div className="flex flex-col md:flex-row justify-between gap-4">
-              
-              {/* SAVE PRESET CONTROL */}
               <div className="flex gap-2 items-center flex-1">
-                 <input 
-                    type="text" 
-                    value={newPresetName}
-                    onChange={(e) => setNewPresetName(e.target.value)}
-                    placeholder="NEW_PRESET_NAME"
-                    className="bg-zinc-950 border border-zinc-700 text-xs font-mono text-white px-3 py-2 w-full md:w-48 focus:outline-none focus:border-zinc-500"
-                 />
-                 <button 
-                   onClick={handleSaveCustomPreset}
-                   className="whitespace-nowrap px-4 py-2 border border-zinc-700 text-zinc-400 font-mono text-xs hover:bg-zinc-800 hover:text-veritas-gold transition-colors"
-                 >
-                   SAVE PRESET
-                 </button>
+                <input
+                  type="text"
+                  value={newPresetName}
+                  onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
+                    setNewPresetName(event.target.value)
+                  }
+                  placeholder="NEW_PRESET_NAME"
+                  className="bg-zinc-950 border border-zinc-700 text-xs font-mono text-white px-3 py-2 w-full md:w-48 focus:outline-none focus:border-zinc-500"
+                />
+                <button
+                  onClick={handleSaveCustomPreset}
+                  className="whitespace-nowrap px-4 py-2 border border-zinc-700 text-zinc-400 font-mono text-xs hover:bg-zinc-800 hover:text-veritas-gold transition-colors"
+                >
+                  SAVE PRESET
+                </button>
               </div>
 
-              {/* ACTION BUTTONS */}
               <div className="flex gap-4 justify-end">
-                <button 
+                <button
                   onClick={onClose}
                   className="px-6 py-2 border border-zinc-600 text-zinc-400 font-mono text-xs hover:bg-zinc-800 transition-colors"
                 >
                   CANCEL
                 </button>
-                <button 
+                <button
                   onClick={handleApply}
                   className="px-6 py-2 bg-veritas-cyan/10 border border-veritas-cyan text-veritas-cyan font-mono text-xs font-bold hover:bg-veritas-cyan/20 transition-colors"
                 >
-                  COMPILE & APPLY
+                  VALIDATE & APPLY
                 </button>
               </div>
             </div>
           </div>
         </div>
-
       </div>
     </div>
   );
