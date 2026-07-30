@@ -1,10 +1,16 @@
 import type {
+  ClaimVerificationSummary,
   ProviderType,
   ReasoningMode,
   ReasoningOutcome,
   SourceMetadata,
   VerificationStatus,
+  VerifiedClaim,
 } from '../types.js';
+import {
+  createEmptyClaimSummary,
+  summarizeClaimVerification,
+} from './claimVerification.js';
 import { dedupeSources } from './sourceUtils.js';
 
 interface BaseOutcomeInput {
@@ -13,6 +19,8 @@ interface BaseOutcomeInput {
   model: string;
   warnings?: string[];
   sources?: SourceMetadata[];
+  claims?: VerifiedClaim[];
+  claimSummary?: ClaimVerificationSummary;
 }
 
 export interface StandardOutcomeInput extends BaseOutcomeInput {
@@ -29,8 +37,20 @@ const uniqueWarnings = (warnings: string[] = []): string[] =>
 export const buildStandardOutcome = (
   input: StandardOutcomeInput
 ): ReasoningOutcome => {
-  const sources = dedupeSources(input.sources);
-  const hasSourceBackedValidation = input.validatorRan && sources.length > 0;
+  const claims = input.claims || [];
+  const claimSummary =
+    input.claimSummary ||
+    (claims.length > 0
+      ? summarizeClaimVerification(claims)
+      : createEmptyClaimSummary());
+  const sources = dedupeSources([
+    ...(input.sources || []),
+    ...claims.flatMap((claim) => claim.sources),
+  ]);
+  const hasSourceBackedValidation =
+    input.validatorRan &&
+    sources.length > 0 &&
+    claimSummary.claimsWithSources > 0;
   const warnings = [...(input.warnings || [])];
 
   if (
@@ -40,7 +60,7 @@ export const buildStandardOutcome = (
     !hasSourceBackedValidation
   ) {
     warnings.push(
-      'Verification was downgraded because no external source metadata was attached.'
+      'Verification was downgraded because no external source metadata was attached to the checked claims.'
     );
   }
 
@@ -74,6 +94,8 @@ export const buildStandardOutcome = (
     roundsExecuted: input.roundsExecuted,
     warnings: uniqueWarnings(warnings),
     sources,
+    claims,
+    claimSummary,
     provider: input.provider,
     model: input.model,
   };
@@ -97,6 +119,12 @@ export const buildUnverifiedOutcome = (
   roundsExecuted: 0,
   warnings: uniqueWarnings(input.warnings),
   sources: dedupeSources(input.sources),
+  claims: input.claims || [],
+  claimSummary:
+    input.claimSummary ||
+    (input.claims?.length
+      ? summarizeClaimVerification(input.claims)
+      : createEmptyClaimSummary()),
   provider: input.provider,
   model: input.model,
 });

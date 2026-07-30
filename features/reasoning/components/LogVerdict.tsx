@@ -1,6 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import type { LogEntry, ReasoningOutcome } from '../types';
+import type {
+  ClaimVerificationSummary,
+  LogEntry,
+  ReasoningOutcome,
+} from '../types';
 import { TerminalText } from '../../../components/TerminalText';
+import { ClaimVerificationPanel } from './ClaimVerificationPanel';
 
 interface LogVerdictProps {
   log: LogEntry;
@@ -8,6 +13,20 @@ interface LogVerdictProps {
   onStop: () => void;
   isPlaying: boolean;
 }
+
+const emptyClaimSummary: ClaimVerificationSummary = {
+  totalClaims: 0,
+  verifiableClaims: 0,
+  supportedClaims: 0,
+  contradictedClaims: 0,
+  mixedClaims: 0,
+  notFoundClaims: 0,
+  notVerifiableClaims: 0,
+  claimsWithSources: 0,
+  citationCoverage: 0,
+  supportCoverage: 0,
+  independentDomains: 0,
+};
 
 const fallbackOutcome = (log: LogEntry): ReasoningOutcome => ({
   status: 'unverified',
@@ -20,6 +39,8 @@ const fallbackOutcome = (log: LogEntry): ReasoningOutcome => ({
   roundsExecuted: 0,
   warnings: ['Legacy result: verification metadata was not recorded.'],
   sources: [],
+  claims: [],
+  claimSummary: emptyClaimSummary,
   provider: 'gemini',
   model: 'unknown',
 });
@@ -40,7 +61,7 @@ export const LogVerdict: React.FC<LogVerdictProps> = ({
   const statusStyle = {
     verified: {
       title: 'VERIFIED VERDICT',
-      subtitle: 'Source-backed validation confirmed the material claims',
+      subtitle: 'Every verifiable material claim has source-backed support',
       icon: '✓',
       text: 'text-emerald-400',
       border: 'border-emerald-500',
@@ -50,7 +71,7 @@ export const LogVerdict: React.FC<LogVerdictProps> = ({
     },
     corrected: {
       title: 'CORRECTED VERDICT',
-      subtitle: 'Source-backed validation corrected the initial answer',
+      subtitle: 'Claim-level validation corrected one or more material assertions',
       icon: '↻',
       text: 'text-veritas-cyan',
       border: 'border-veritas-cyan',
@@ -65,7 +86,7 @@ export const LogVerdict: React.FC<LogVerdictProps> = ({
           ? 'Completed workflow; no independent validation performed'
           : outcome.consensusReached
             ? 'Internal agent consensus only; not external verification'
-            : 'No source-backed external validation was completed',
+            : 'No complete source-backed verification was achieved',
       icon: '?',
       text: 'text-veritas-gold',
       border: 'border-veritas-gold',
@@ -85,7 +106,7 @@ export const LogVerdict: React.FC<LogVerdictProps> = ({
     },
     insufficient_evidence: {
       title: 'INSUFFICIENT EVIDENCE',
-      subtitle: 'The available evidence did not support a conclusive answer',
+      subtitle: 'Material claims remain unsupported, mixed, or not externally verifiable',
       icon: '∅',
       text: 'text-orange-400',
       border: 'border-orange-500',
@@ -184,10 +205,15 @@ export const LogVerdict: React.FC<LogVerdictProps> = ({
                 </div>
               )}
 
+              <ClaimVerificationPanel
+                claims={outcome.claims}
+                summary={outcome.claimSummary}
+              />
+
               {outcome.sources.length > 0 && (
                 <div className="mt-4 border-t border-zinc-900 pt-3">
                   <div className="text-[9px] text-zinc-500 uppercase tracking-widest mb-2">
-                    Validation sources
+                    All validation sources
                   </div>
                   <div className="flex flex-wrap gap-2">
                     {outcome.sources.map((source) =>
@@ -224,7 +250,7 @@ export const LogVerdict: React.FC<LogVerdictProps> = ({
                 ))}
               </div>
               <div className="font-mono text-xs text-zinc-500 tracking-widest animate-pulse">
-                CALCULATING EVIDENCE STATUS...
+                CALCULATING CLAIM EVIDENCE STATUS...
               </div>
             </div>
           )}
@@ -244,6 +270,10 @@ export const LogVerdict: React.FC<LogVerdictProps> = ({
               <span>VALIDATOR: {outcome.validatorRan ? 'RAN' : 'NOT RUN'}</span>
               <span>
                 SOURCE CHECK: {outcome.verificationStatus || 'NOT RUN'}
+              </span>
+              <span>CLAIMS: {outcome.claimSummary.totalClaims}</span>
+              <span>
+                CITATION COVERAGE: {outcome.claimSummary.citationCoverage}%
               </span>
               <span>SOURCES: {outcome.sources.length}</span>
               <span>

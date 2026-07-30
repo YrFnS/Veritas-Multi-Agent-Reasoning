@@ -80,6 +80,68 @@ export interface ValidatorResponse {
   final_output: string;
 }
 
+export type ClaimImportance = 'primary' | 'supporting';
+
+export interface ExtractedClaim {
+  id: string;
+  text: string;
+  importance: ClaimImportance;
+  verifiable: boolean;
+}
+
+export interface ClaimExtractionResponse {
+  claims: ExtractedClaim[];
+}
+
+export type RawClaimVerificationStatus =
+  | 'SUPPORTED'
+  | 'CONTRADICTED'
+  | 'MIXED'
+  | 'NOT_FOUND'
+  | 'NOT_VERIFIABLE';
+
+export interface ClaimVerificationResponse {
+  status: RawClaimVerificationStatus;
+  rationale: string;
+  corrected_claim: string;
+}
+
+export type ClaimVerificationStatus =
+  | 'supported'
+  | 'contradicted'
+  | 'mixed'
+  | 'not_found'
+  | 'not_verifiable';
+
+export interface VerifiedClaim {
+  id: string;
+  text: string;
+  importance: ClaimImportance;
+  status: ClaimVerificationStatus;
+  rationale: string;
+  correctedText?: string;
+  sources: SourceMetadata[];
+}
+
+export interface ClaimVerificationSummary {
+  totalClaims: number;
+  verifiableClaims: number;
+  supportedClaims: number;
+  contradictedClaims: number;
+  mixedClaims: number;
+  notFoundClaims: number;
+  notVerifiableClaims: number;
+  claimsWithSources: number;
+  citationCoverage: number;
+  supportCoverage: number;
+  independentDomains: number;
+}
+
+export interface ClaimSynthesisResponse {
+  reasoning: string;
+  final_output: string;
+}
+
 export interface GenericAgentResponse {
   work_summary: string;
   output: string;
@@ -111,6 +173,8 @@ export interface ReasoningOutcome {
   roundsExecuted: number;
   warnings: string[];
   sources: SourceMetadata[];
+  claims: VerifiedClaim[];
+  claimSummary: ClaimVerificationSummary;
   provider: ProviderType;
   model: string;
 }
@@ -120,10 +184,14 @@ export type LogMetadata = Partial<
     SkepticResponse &
     JudgeResponse &
     ValidatorResponse &
+    ClaimExtractionResponse &
+    ClaimSynthesisResponse &
     GenericAgentResponse &
     InspectionResponse
 > & {
   outcome?: ReasoningOutcome;
+  verifiedClaims?: VerifiedClaim[];
+  claimSummary?: ClaimVerificationSummary;
 };
 
 export interface LogEntry {
