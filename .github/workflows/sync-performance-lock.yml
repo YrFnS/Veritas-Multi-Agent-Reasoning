@@ -1,24 +1,28 @@
 name: Sync performance lockfile
 
 on:
-  push:
-    branches:
-      - agent/performance-dependency-cleanup
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
 
 permissions:
   contents: write
 
 jobs:
   sync-lockfile:
-    if: github.actor != 'github-actions[bot]'
+    if: >-
+      github.event.pull_request.head.ref == 'agent/performance-dependency-cleanup' &&
+      github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
     steps:
-      - name: Checkout branch
+      - name: Checkout pull request branch
         uses: actions/checkout@v6
         with:
-          ref: agent/performance-dependency-cleanup
+          ref: ${{ github.event.pull_request.head.ref }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v6
