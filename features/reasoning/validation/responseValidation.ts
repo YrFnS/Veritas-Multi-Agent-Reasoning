@@ -3,6 +3,7 @@ import type {
   ClaimExtractionResponse,
   ClaimSynthesisResponse,
   ClaimVerificationResponse,
+  ExtractedClaim,
   GenericAgentResponse,
   InspectionResponse,
   JudgeResponse,
@@ -132,32 +133,35 @@ export const assertClaimExtractionResponse = (
   }
 
   const seenIds = new Set<string>();
-  const claims = record.claims.map((item, index) => {
-    const claim = asRecord(item);
-    const id = readString(claim.id, `claims[${index}].id`).trim();
-    const normalizedId = id.toLowerCase();
-    if (seenIds.has(normalizedId)) {
-      throw new ResponseValidationError(`claim id '${id}' must be unique.`);
-    }
-    seenIds.add(normalizedId);
+  const claims: ExtractedClaim[] = record.claims.map(
+    (item, index): ExtractedClaim => {
+      const claim = asRecord(item);
+      const id = readString(claim.id, `claims[${index}].id`).trim();
+      const normalizedId = id.toLowerCase();
+      if (seenIds.has(normalizedId)) {
+        throw new ResponseValidationError(`claim id '${id}' must be unique.`);
+      }
+      seenIds.add(normalizedId);
 
-    const importance = claim.importance;
-    if (importance !== 'primary' && importance !== 'supporting') {
-      throw new ResponseValidationError(
-        `claims[${index}].importance must be 'primary' or 'supporting'.`
-      );
-    }
+      const rawImportance = claim.importance;
+      if (rawImportance !== 'primary' && rawImportance !== 'supporting') {
+        throw new ResponseValidationError(
+          `claims[${index}].importance must be 'primary' or 'supporting'.`
+        );
+      }
+      const importance: ExtractedClaim['importance'] = rawImportance;
 
-    return {
-      id,
-      text: readString(claim.text, `claims[${index}].text`).trim(),
-      importance,
-      verifiable: readBoolean(
-        claim.verifiable,
-        `claims[${index}].verifiable`
-      ),
-    };
-  });
+      return {
+        id,
+        text: readString(claim.text, `claims[${index}].text`).trim(),
+        importance,
+        verifiable: readBoolean(
+          claim.verifiable,
+          `claims[${index}].verifiable`
+        ),
+      };
+    }
+  );
 
   return { claims };
 };
