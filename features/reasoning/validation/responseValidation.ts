@@ -1,5 +1,8 @@
 import type {
   AnalystResponse,
+  ClaimExtractionResponse,
+  ClaimSynthesisResponse,
+  ClaimVerificationResponse,
   GenericAgentResponse,
   InspectionResponse,
   JudgeResponse,
@@ -114,6 +117,96 @@ export const assertValidatorResponse = (
     verification_status: status,
     reasoning: readString(record.reasoning, 'reasoning'),
     final_output: readString(record.final_output, 'final_output'),
+  };
+};
+
+export const assertClaimExtractionResponse = (
+  value: unknown
+): ClaimExtractionResponse => {
+  const record = asRecord(value);
+  if (!Array.isArray(record.claims)) {
+    throw new ResponseValidationError('claims must be an array.');
+  }
+  if (record.claims.length > 6) {
+    throw new ResponseValidationError('claims must contain at most six items.');
+  }
+
+  const seenIds = new Set<string>();
+  const claims = record.claims.map((item, index) => {
+    const claim = asRecord(item);
+    const id = readString(claim.id, `claims[${index}].id`).trim();
+    const normalizedId = id.toLowerCase();
+    if (seenIds.has(normalizedId)) {
+      throw new ResponseValidationError(`claim id '${id}' must be unique.`);
+    }
+    seenIds.add(normalizedId);
+
+    const importance = claim.importance;
+    if (importance !== 'primary' && importance !== 'supporting') {
+      throw new ResponseValidationError(
+        `claims[${index}].importance must be 'primary' or 'supporting'.`
+      );
+    }
+
+    return {
+      id,
+      text: readString(claim.text, `claims[${index}].text`).trim(),
+      importance,
+      verifiable: readBoolean(
+        claim.verifiable,
+        `claims[${index}].verifiable`
+      ),
+    };
+  });
+
+  return { claims };
+};
+
+export const assertClaimVerificationResponse = (
+  value: unknown
+): ClaimVerificationResponse => {
+  const record = asRecord(value);
+  const status = record.status;
+  const allowedStatuses = [
+    'SUPPORTED',
+    'CONTRADICTED',
+    'MIXED',
+    'NOT_FOUND',
+    'NOT_VERIFIABLE',
+  ] as const;
+
+  if (!allowedStatuses.includes(status as (typeof allowedStatuses)[number])) {
+    throw new ResponseValidationError(
+      `status must be one of ${allowedStatuses.join(', ')}.`
+    );
+  }
+
+  const correctedClaim = readString(
+    record.corrected_claim,
+    'corrected_claim',
+    true
+  ).trim();
+
+  if (status === 'CONTRADICTED' && !correctedClaim) {
+    throw new ResponseValidationError(
+      'corrected_claim is required when status is CONTRADICTED.'
+    );
+  }
+
+  return {
+    status: status as ClaimVerificationResponse['status'],
+    rationale: readString(record.rationale, 'rationale').trim(),
+    corrected_claim: correctedClaim,
+  };
+};
+
+export const assertClaimSynthesisResponse = (
+  value: unknown
+): ClaimSynthesisResponse => {
+  const record = asRecord(value);
+  return {
+    reasoning: readString(record.reasoning, 'reasoning').trim(),
+    final_output: readString(record.final_output, 'final_output').trim(),
   };
 };
 
