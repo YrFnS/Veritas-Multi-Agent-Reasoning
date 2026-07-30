@@ -1,13 +1,49 @@
-import { GoogleGenAI, Schema, Modality, ThinkingLevel } from '@google/genai';
 import type {
   AgentConfig,
   IReasoningCore,
+  JsonSchema,
   ProviderCapabilities,
   SourceMetadata,
 } from '../types.js';
 import { throwIfAborted, waitForRetry } from './abortUtils.js';
 import { createWebSource } from './sourceUtils.js';
 import { parseStrictJson } from './strictJson.js';
+
+interface GeminiPart {
+  text?: string;
+  inlineData?: {
+    data?: string;
+    mimeType?: string;
+  };
+}
+
+interface GeminiCandidate {
+  content?: {
+    parts?: GeminiPart[];
+  };
+  groundingMetadata?: {
+    groundingChunks?: unknown;
+  };
+}
+
+interface GeminiResponse {
+  candidates?: GeminiCandidate[];
+  error?: {
+    message?: string;
+    status?: string;
+  };
+}
+
+class GeminiHttpError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+    public readonly retryable: boolean
+  ) {
+    super(message);
+    this.name = 'GeminiHttpError';
+  }
+}
 
 export class GeminiCore implements IReasoningCore {
   public readonly capabilities: ProviderCapabilities = {
@@ -18,17 +54,16 @@ export class GeminiCore implements IReasoningCore {
     speech: true,
   };
 
-  private readonly ai: GoogleGenAI;
+  private readonly baseUrl =
+    'https://generativelanguage.googleapis.com/v1beta/models';
 
-  constructor(apiKey: string) {
-    this.ai = new GoogleGenAI({ apiKey });
-  }
+  constructor(private readonly apiKey: string) {}
 
   public async generateJSON(
     model: string,
     systemPrompt: string,
     userPrompt: string,
-    schema: Schema,
+    schema: JsonSchema,
     useTools = false,
     configOverrides: Partial<AgentConfig> = {},
     signal?: AbortSignal
@@ -41,52 +76,56 @@ export class GeminiCore implements IReasoningCore {
       throwIfAborted(signal);
 
       try {
-        let thinkingLevel = ThinkingLevel.HIGH;
-        if (configOverrides.thinkingBudget !== undefined) {
-          if (configOverrides.thinkingBudget === 0) {
-            thinkingLevel = ThinkingLevel.MINIMAL;
-          } else if (configOverrides.thinkingBudget < 4000) {
-            thinkingLevel = ThinkingLevel.LOW;
-          }
-        }
-
-        const config: any = {
-          systemInstruction: systemPrompt,
+        const generationConfig: Record<string, unknown> = {
           responseMimeType: 'application/json',
-          responseSchema: schema,
-          thinkingConfig: { thinkingLevel },
+          responseJsonSchema: schema,
+          thinkingConfig: {
+            thinkingLevel: this.resolveThinkingLevel(
+              configOverrides.thinkingBudget
+            ),
+          },
           maxOutputTokens: 32768,
-          abortSignal: signal,
         };
 
         const usesModernGeminiSampling = /^gemini-3\.(5|6)/.test(model);
         if (!usesModernGeminiSampling) {
-          config.temperature = configOverrides.temperature ?? 0.1;
+          generationConfig.temperature = configOverrides.temperature ?? 0.1;
           if (configOverrides.topK !== undefined) {
-            config.topK = configOverrides.topK;
+            generationConfig.topK = configOverrides.topK;
           }
           if (configOverrides.topP !== undefined) {
-            config.topP = configOverrides.topP;
+            generationConfig.topP = configOverrides.topP;
           }
         }
 
-        if (useTools) config.tools = [{ googleSearch: {} }];
-
-        const response = await this.ai.models.generateContent({
+        const response = await this.postGenerateContent(
           model,
-          contents: userPrompt,
-          config,
-        });
+          {
+            systemInstruction: {
+              parts: [{ text: systemPrompt }],
+            },
+            contents: [
+              {
+                role: 'user',
+                parts: [{ text: userPrompt }],
+              },
+            ],
+            generationConfig,
+            ...(useTools ? { tools: [{ googleSearch: {} }] } : {}),
+          },
+          signal
+        );
 
         throwIfAborted(signal);
 
-        const text = response.text;
+        const candidate = response.candidates?.[0];
+        const text = this.readText(candidate);
         if (!text) throw new Error('Empty response from Gemini.');
 
         return {
           data: parseStrictJson(text, 'Gemini'),
           sources: this.normalizeSources(
-            response.candidates?.[0]?.groundingMetadata?.groundingChunks
+            candidate?.groundingMetadata?.groundingChunks
           ),
         };
       } catch (error) {
@@ -102,13 +141,18 @@ export class GeminiCore implements IReasoningCore {
         lastError = error;
         attempt += 1;
 
-        if (attempt <= maxRetries) {
+        const retryable =
+          !(error instanceof GeminiHttpError) || error.retryable;
+        if (attempt <= maxRetries && retryable) {
           console.warn(
             `GeminiCore: execution failed (attempt ${attempt}/${maxRetries}). Retrying...`,
             error
           );
           await waitForRetry(attempt * 1000, signal);
+          continue;
         }
+
+        break;
       }
     }
 
@@ -119,28 +163,72 @@ export class GeminiCore implements IReasoningCore {
   }
 
   public async generateSpeech(text: string): Promise<string> {
-    try {
-      const response = await this.ai.models.generateContent({
-        model: 'gemini-2.5-flash-preview-tts',
+    const response = await this.postGenerateContent(
+      'gemini-2.5-flash-preview-tts',
+      {
         contents: [{ parts: [{ text }] }],
-        config: {
-          responseModalities: [Modality.AUDIO],
+        generationConfig: {
+          responseModalities: ['AUDIO'],
           speechConfig: {
             voiceConfig: {
               prebuiltVoiceConfig: { voiceName: 'Kore' },
             },
           },
         },
-      });
+      }
+    );
 
-      const base64Audio =
-        response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-      if (!base64Audio) throw new Error('No audio data returned.');
-      return base64Audio;
-    } catch (error) {
-      console.error('GeminiCore: TTS failed:', error);
-      throw error;
+    const base64Audio = response.candidates?.[0]?.content?.parts?.find(
+      (part) => part.inlineData?.data
+    )?.inlineData?.data;
+
+    if (!base64Audio) throw new Error('No audio data returned from Gemini.');
+    return base64Audio;
+  }
+
+  private async postGenerateContent(
+    model: string,
+    body: Record<string, unknown>,
+    signal?: AbortSignal
+  ): Promise<GeminiResponse> {
+    const modelId = model.replace(/^models\//, '');
+    const response = await fetch(
+      `${this.baseUrl}/${encodeURIComponent(modelId)}:generateContent`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': this.apiKey,
+        },
+        body: JSON.stringify(body),
+        signal,
+      }
+    );
+
+    const payload = (await response.json().catch(() => ({}))) as GeminiResponse;
+    if (!response.ok) {
+      const message =
+        payload.error?.message ||
+        payload.error?.status ||
+        `Gemini API error: ${response.status}`;
+      const retryable = response.status === 429 || response.status >= 500;
+      throw new GeminiHttpError(message, response.status, retryable);
     }
+
+    return payload;
+  }
+
+  private resolveThinkingLevel(thinkingBudget: number | undefined): string {
+    if (thinkingBudget === 0) return 'MINIMAL';
+    if (thinkingBudget !== undefined && thinkingBudget < 4000) return 'LOW';
+    return 'HIGH';
+  }
+
+  private readText(candidate: GeminiCandidate | undefined): string {
+    return (candidate?.content?.parts || [])
+      .map((part) => part.text || '')
+      .join('')
+      .trim();
   }
 
   private normalizeSources(chunks: unknown): SourceMetadata[] {

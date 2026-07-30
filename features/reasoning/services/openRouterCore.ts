@@ -1,7 +1,7 @@
-import { Schema } from '@google/genai';
 import type {
   AgentConfig,
   IReasoningCore,
+  JsonSchema,
   ProviderCapabilities,
   SourceMetadata,
 } from '../types.js';
@@ -43,7 +43,7 @@ export class OpenRouterCore implements IReasoningCore {
     model: string,
     systemPrompt: string,
     userPrompt: string,
-    schema: Schema,
+    schema: JsonSchema,
     _useTools = false,
     configOverrides: Partial<AgentConfig> = {},
     signal?: AbortSignal
@@ -128,37 +128,31 @@ export class OpenRouterCore implements IReasoningCore {
       : new Error('OpenRouter request failed after retries.');
   }
 
-  private toJsonSchema(schema: unknown): Record<string, unknown> {
-    if (typeof schema !== 'object' || schema === null || Array.isArray(schema)) {
-      return {};
+  private toJsonSchema(schema: JsonSchema): Record<string, unknown> {
+    const output: Record<string, unknown> = {
+      type: schema.type,
+    };
+
+    if (schema.description !== undefined) {
+      output.description = schema.description;
+    }
+    if (schema.enum !== undefined) output.enum = schema.enum;
+    if (schema.required !== undefined) output.required = schema.required;
+    if (schema.minItems !== undefined) output.minItems = schema.minItems;
+    if (schema.maxItems !== undefined) output.maxItems = schema.maxItems;
+    if (schema.items) output.items = this.toJsonSchema(schema.items);
+
+    if (schema.properties) {
+      output.properties = Object.fromEntries(
+        Object.entries(schema.properties).map(([name, child]) => [
+          name,
+          this.toJsonSchema(child),
+        ])
+      );
     }
 
-    const input = schema as Record<string, unknown>;
-    const output: Record<string, unknown> = {};
-
-    for (const [key, value] of Object.entries(input)) {
-      if (key === 'type' && typeof value === 'string') {
-        output.type = value.toLowerCase();
-      } else if (key === 'properties' && value && typeof value === 'object') {
-        output.properties = Object.fromEntries(
-          Object.entries(value as Record<string, unknown>).map(
-            ([name, child]) => [name, this.toJsonSchema(child)]
-          )
-        );
-      } else if (key === 'items') {
-        output.items = this.toJsonSchema(value);
-      } else if (
-        key === 'required' ||
-        key === 'enum' ||
-        key === 'description' ||
-        key === 'format'
-      ) {
-        output[key] = value;
-      }
-    }
-
-    if (output.type === 'object') {
-      output.additionalProperties = false;
+    if (schema.type === 'object') {
+      output.additionalProperties = schema.additionalProperties ?? false;
     }
 
     return output;

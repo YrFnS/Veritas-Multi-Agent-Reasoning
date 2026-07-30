@@ -15,7 +15,7 @@ Veritas is designed to **reduce unsupported claims**, not to guarantee truth or 
 
 ### Custom workflows
 
-Custom workflows can connect one or more agents in a linear sequence. Workflow output is intentionally labeled **Unverified** unless a future workflow adds an explicit evidence-validation stage.
+Custom workflows can connect one or more agents in a linear sequence. Workflow output is intentionally labeled **Unverified** unless the workflow contains an explicit evidence-validation stage.
 
 ### Agent diagnostics
 
@@ -23,7 +23,7 @@ Use `@AgentName: question` to ask an agent about its role, configuration, or pre
 
 ## Claim-level verification
 
-The validator no longer checks the final answer as one undifferentiated block. It performs this pipeline:
+The validator checks material facts individually rather than grading the answer as one undifferentiated block:
 
 ```text
 Judge verdict
@@ -43,19 +43,19 @@ Every extracted claim receives one of these statuses:
 
 | Claim status | Meaning |
 |---|---|
-| `supported` | Reliable source metadata directly supports the complete claim. |
-| `contradicted` | Reliable evidence materially rejects the claim and a correction is supplied. |
+| `supported` | Attached evidence supports the complete claim. |
+| `contradicted` | Attached evidence materially rejects the claim and supports a correction. |
 | `mixed` | Evidence conflicts or supports only part of the claim. |
 | `not_found` | The claim is externally verifiable, but reliable attached evidence was not available. |
 | `not_verifiable` | The statement is an opinion, recommendation, prediction, or lacks an external truth condition. |
 
-A model-generated `SUPPORTED`, `CONTRADICTED`, or `MIXED` judgment with no attached external source metadata is automatically downgraded to `not_found`.
+A model-generated `SUPPORTED`, `CONTRADICTED`, or `MIXED` judgment without attached external source metadata is automatically downgraded to `not_found`. A source-less contradiction cannot inject an unsupported correction into the final answer.
 
-The verdict UI displays:
+The verdict interface shows:
 
 - every extracted claim and its importance;
 - claim-specific status and rationale;
-- a corrected version when applicable;
+- a corrected version when supported by evidence;
 - sources attached to that individual claim;
 - citation coverage and support coverage;
 - supported, contradicted, and unresolved counts;
@@ -71,18 +71,20 @@ The verdict UI displays:
 | `disputed` | Material skeptic objections remained unresolved without conclusive validation. |
 | `insufficient_evidence` | A primary claim remains mixed, unsupported, not verifiable, or otherwise inconclusive. |
 
-A source being returned does not by itself prove that the source is authoritative. Veritas associates evidence with claims and exposes the audit trail, but source-quality ranking remains a separate improvement area.
+A returned source is not automatically authoritative. Veritas exposes the claim-to-source audit trail; source-quality ranking remains a separate improvement area.
 
 ## Providers
 
 Veritas currently supports:
 
-- **Gemini** through `@google/genai`
+- **Gemini** through the official `generateContent` REST API
 - **OpenRouter** through its Chat Completions API
+
+The browser bundle does not include the Google Gen AI SDK. Gemini structured responses, grounding metadata, Google Search, cancellation, retries, and TTS are handled by a small typed REST adapter.
 
 The default reasoning model is pinned to `gemini-3.6-flash` rather than a moving `latest` alias.
 
-Provider keys are separate. A Gemini key is never used as an OpenRouter fallback, and vice versa. OpenRouter currently uses strict JSON Schema output, but its adapter does not yet implement Veritas web-search grounding. Claim validation is therefore skipped and clearly marked when OpenRouter is selected.
+Provider keys are separate. A Gemini key is never used as an OpenRouter fallback, and vice versa. OpenRouter uses strict JSON Schema output, but its current adapter does not provide Veritas web-search grounding. Claim validation is therefore skipped and clearly marked when OpenRouter is selected.
 
 ## API-key security
 
@@ -98,7 +100,7 @@ This repository is currently a client-only BYOK application. Keys entered in the
 The correctness and claim-verification foundation includes:
 
 - runtime validation for every model response;
-- rejection of malformed or truncated JSON instead of heuristic “healing”;
+- rejection of malformed or truncated JSON instead of heuristic repair;
 - full original-query, draft, debate-history, critique, and correction context during analyst revisions;
 - one grounded search request per verifiable claim;
 - source metadata required before a claim can remain supported, contradicted, or mixed;
@@ -110,113 +112,57 @@ The correctness and claim-verification foundation includes:
 - provider capability checks and visible warnings;
 - no hidden-chain-of-thought display—the UI presents concise evidence, debate, validation, or work summaries instead.
 
+## Performance safeguards
+
+The production-oriented frontend now includes:
+
+- compiled Tailwind CSS 4 instead of the browser Play CDN;
+- no runtime import map or remote JavaScript dependency for React or Gemini;
+- a small direct Gemini REST transport instead of bundling the provider SDK;
+- React vendor chunk separation;
+- a CI-enforced JavaScript and CSS bundle budget;
+- a production dependency audit gate;
+- canvas animation that pauses while the page is hidden;
+- hardware-aware neural-background density;
+- static visuals and immediate text rendering for users who prefer reduced motion;
+- immediate rendering for very large terminal responses to avoid thousands of timer updates.
+
 ## Evaluation harness
 
-The repository contains a provider-neutral evaluation harness under `features/reasoning/evaluation/`.
+The provider-neutral evaluation harness lives under `features/reasoning/evaluation/` and covers stable facts, time-sensitive facts, citation-required questions, false premises, ambiguity, insufficient evidence, conflicting claims, overbroad claims, and Arabic behavior.
 
-The baseline dataset currently covers:
-
-- stable facts;
-- time-sensitive facts;
-- citation-required questions;
-- false-premise rejection;
-- ambiguous questions;
-- insufficient-evidence cases;
-- conflicting or overbroad claims;
-- Arabic multilingual behavior.
-
-It can compare three execution modes:
+It compares three execution modes:
 
 - `single`
 - `debate`
 - `verified`
 
-Recorded observations are scored on applicable checks such as:
-
-- answer terms and forbidden assertions;
-- acceptable evidence status;
-- claim count;
-- citation coverage;
-- independent source domains;
-- source-backed claim presence;
-- latency, request count, and estimated cost.
-
-The summary reports pass rate, average score, latency, requests, claim support rate, citation coverage, and results by mode.
-
-### Score recorded observations
+Recorded observations can be scored with:
 
 ```bash
 npm run evaluate -- path/to/evaluation-observations.json
 ```
 
-The input must be a JSON array shaped like:
+The summary reports pass rate, average score, latency, request count, claim support rate, citation coverage, source-domain count, and results by mode.
 
-```json
-[
-  {
-    "caseId": "stable-gold-symbol",
-    "mode": "verified",
-    "outcome": {
-      "status": "verified",
-      "answer": "The chemical symbol for gold is Au.",
-      "mode": "standard",
-      "consensusReached": true,
-      "validatorRan": true,
-      "verificationStatus": "CONFIRMED",
-      "isConclusive": true,
-      "roundsExecuted": 1,
-      "warnings": [],
-      "sources": [],
-      "claims": [],
-      "claimSummary": {
-        "totalClaims": 1,
-        "verifiableClaims": 1,
-        "supportedClaims": 1,
-        "contradictedClaims": 0,
-        "mixedClaims": 0,
-        "notFoundClaims": 0,
-        "notVerifiableClaims": 0,
-        "claimsWithSources": 1,
-        "citationCoverage": 100,
-        "supportCoverage": 100,
-        "independentDomains": 1
-      },
-      "provider": "gemini",
-      "model": "gemini-3.6-flash"
-    },
-    "latencyMs": 1200,
-    "requestCount": 6,
-    "estimatedCostUsd": 0.01
-  }
-]
-```
-
-The harness is intentionally decoupled from a provider. A browser or server runner can call `runEvaluationSuite()` with an executor and persist the returned observations for repeatable comparisons.
-
-## Cost and latency note
-
-The `VERIFIED` pipeline may perform:
-
-- one claim-extraction request;
-- up to six claim-specific search requests;
-- one synthesis request when claims require correction or qualification.
-
-This improves evidence attribution but can increase latency and provider usage. The evaluation harness records request count, latency, and estimated cost so quality gains can be compared against their operational cost.
+The `VERIFIED` pipeline may perform one claim-extraction request, up to six claim-specific search requests, and one synthesis request when corrections or qualifications are needed. The evaluation harness records the operational cost so quality gains can be compared against latency and provider usage.
 
 ## Tech stack
 
 - React 19
 - TypeScript
 - Vite
-- Tailwind CSS runtime configuration
-- `@google/genai`
+- Tailwind CSS 4 compiled through `@tailwindcss/vite`
+- Direct Gemini REST and OpenRouter REST adapters
 - Browser Web Speech and Web Audio APIs
+- Node's built-in test runner
+- GitHub Actions CI
 
 ## Getting started
 
 ### 1. Install dependencies
 
-Node.js 20 or newer is recommended for the current SDK dependency tree.
+Node.js 20 or newer is required. CI runs on Node.js 24.
 
 ```bash
 npm install
@@ -236,9 +182,11 @@ Open the local URL shown by Vite, then open **CFG** and add the provider key you
 npm run typecheck
 npm test
 npm run build
+npm run check:bundle
+npm run audit:prod
 ```
 
-The regression suite verifies configuration flexibility, provider-key isolation, malformed-response rejection, safe source handling, abortable retries, complete revision context, claim response validation, deterministic coverage calculations, claim-specific evidence status, prompt-injection boundaries, truthful verdict transitions, and evaluation scoring.
+`check:bundle` requires a completed production build. CI runs installation, the production audit, type-checking, regression tests, the production build, and bundle-budget enforcement on every pull request.
 
 ## Configuration rules
 
@@ -274,11 +222,12 @@ features/reasoning/
 ├── hooks/               reasoning state, command history, voice, speech, and sound
 ├── services/
 │   ├── geminiService.ts orchestration for debate, workflows, and diagnostics
+│   ├── geminiCore.ts    direct Gemini REST adapter
+│   ├── openRouterCore.ts OpenRouter REST adapter
 │   ├── claimValidationService.ts per-claim external verification orchestration
 │   ├── claimVerification.ts deterministic claim metrics and outcome helpers
-│   ├── *Core.ts         provider adapters
 │   ├── prompts.ts       role and task instructions
-│   ├── schemas.ts       structured-output schemas
+│   ├── schemas.ts       provider-neutral structured-output schemas
 │   └── *Utils.ts        keys, outcomes, runtime, sources, aborts, and strict JSON
 ├── validation/          runtime configuration and model-response validation
 ├── constants.ts         built-in presets
@@ -293,8 +242,8 @@ features/reasoning/
 - Multi-agent agreement is not independent proof when all agents use the same provider and model.
 - Claim searches are sequential to reduce provider bursts, which increases verified-mode latency.
 - Source authority, publication date, and primary-source quality are not yet scored automatically.
-- The evaluation harness can run through a supplied executor, but a first-party live browser evaluation dashboard is not yet included.
-- Tailwind is still loaded at runtime; a compiled Tailwind build is planned for a later performance-focused change.
+- The evaluation harness can run through a supplied executor, but a first-party live evaluation dashboard is not yet included.
+- External Google Fonts are still used; a fully self-contained/offline edition would need locally bundled or system fonts.
 
 ## Keyboard shortcuts
 
