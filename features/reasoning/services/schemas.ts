@@ -1,22 +1,37 @@
-import { Type, Schema } from '@google/genai';
+import type { JsonSchema } from '../types.js';
 
-export const ANALYST_SCHEMA: Schema = {
+const Type = {
+  OBJECT: 'object',
+  ARRAY: 'array',
+  STRING: 'string',
+  NUMBER: 'number',
+  INTEGER: 'integer',
+  BOOLEAN: 'boolean',
+  NULL: 'null',
+} as const;
+
+export const ANALYST_SCHEMA: JsonSchema = {
   type: Type.OBJECT,
   properties: {
     evidence_summary: {
       type: Type.STRING,
-      description: 'Concise evidence and uncertainty summary; never hidden chain-of-thought.',
+      description:
+        'Concise evidence and uncertainty summary; never hidden chain-of-thought.',
     },
-    factual_answer: { type: Type.STRING, description: 'The proposed answer.' },
+    factual_answer: {
+      type: Type.STRING,
+      description: 'The proposed answer.',
+    },
     confidence: {
       type: Type.NUMBER,
       description: 'Uncalibrated model confidence from 0 to 100.',
     },
   },
   required: ['evidence_summary', 'factual_answer', 'confidence'],
+  additionalProperties: false,
 };
 
-export const SKEPTIC_SCHEMA: Schema = {
+export const SKEPTIC_SCHEMA: JsonSchema = {
   type: Type.OBJECT,
   properties: {
     analysis: { type: Type.STRING, description: 'Critique of the input.' },
@@ -29,12 +44,16 @@ export const SKEPTIC_SCHEMA: Schema = {
     correction: { type: Type.STRING, description: 'Proposed correction.' },
   },
   required: ['analysis', 'has_flaws', 'flaws', 'correction'],
+  additionalProperties: false,
 };
 
-export const JUDGE_SCHEMA: Schema = {
+export const JUDGE_SCHEMA: JsonSchema = {
   type: Type.OBJECT,
   properties: {
-    debate_summary: { type: Type.STRING, description: 'Brief recap of the debate.' },
+    debate_summary: {
+      type: Type.STRING,
+      description: 'Brief recap of the debate.',
+    },
     final_verdict: {
       type: Type.STRING,
       description: 'Evidence-calibrated answer for the user.',
@@ -45,9 +64,10 @@ export const JUDGE_SCHEMA: Schema = {
     },
   },
   required: ['debate_summary', 'final_verdict', 'is_conclusive'],
+  additionalProperties: false,
 };
 
-export const VALIDATOR_SCHEMA: Schema = {
+export const VALIDATOR_SCHEMA: JsonSchema = {
   type: Type.OBJECT,
   properties: {
     verification_status: {
@@ -64,14 +84,16 @@ export const VALIDATOR_SCHEMA: Schema = {
     },
   },
   required: ['verification_status', 'reasoning', 'final_output'],
+  additionalProperties: false,
 };
 
-export const CLAIM_EXTRACTION_SCHEMA: Schema = {
+export const CLAIM_EXTRACTION_SCHEMA: JsonSchema = {
   type: Type.OBJECT,
   properties: {
     claims: {
       type: Type.ARRAY,
       description: 'At most six atomic material claims from the proposed answer.',
+      maxItems: 6,
       items: {
         type: Type.OBJECT,
         properties: {
@@ -81,7 +103,8 @@ export const CLAIM_EXTRACTION_SCHEMA: Schema = {
           },
           text: {
             type: Type.STRING,
-            description: 'One atomic factual claim that can be checked independently.',
+            description:
+              'One atomic factual claim that can be checked independently.',
           },
           importance: {
             type: Type.STRING,
@@ -89,17 +112,20 @@ export const CLAIM_EXTRACTION_SCHEMA: Schema = {
           },
           verifiable: {
             type: Type.BOOLEAN,
-            description: 'False for opinions, advice, or claims that cannot be externally checked.',
+            description:
+              'False for opinions, advice, or claims that cannot be externally checked.',
           },
         },
         required: ['id', 'text', 'importance', 'verifiable'],
+        additionalProperties: false,
       },
     },
   },
   required: ['claims'],
+  additionalProperties: false,
 };
 
-export const CLAIM_VERIFICATION_SCHEMA: Schema = {
+export const CLAIM_VERIFICATION_SCHEMA: JsonSchema = {
   type: Type.OBJECT,
   properties: {
     status: {
@@ -118,13 +144,15 @@ export const CLAIM_VERIFICATION_SCHEMA: Schema = {
     },
     corrected_claim: {
       type: Type.STRING,
-      description: 'Corrected atomic claim when contradicted; otherwise an empty string.',
+      description:
+        'Corrected atomic claim when contradicted; otherwise an empty string.',
     },
   },
   required: ['status', 'rationale', 'corrected_claim'],
+  additionalProperties: false,
 };
 
-export const CLAIM_SYNTHESIS_SCHEMA: Schema = {
+export const CLAIM_SYNTHESIS_SCHEMA: JsonSchema = {
   type: Type.OBJECT,
   properties: {
     reasoning: {
@@ -133,25 +161,29 @@ export const CLAIM_SYNTHESIS_SCHEMA: Schema = {
     },
     final_output: {
       type: Type.STRING,
-      description: 'Rewritten user-facing answer aligned with the claim verification report.',
+      description:
+        'Rewritten user-facing answer aligned with the claim verification report.',
     },
   },
   required: ['reasoning', 'final_output'],
+  additionalProperties: false,
 };
 
-export const GENERIC_STEP_SCHEMA: Schema = {
+export const GENERIC_STEP_SCHEMA: JsonSchema = {
   type: Type.OBJECT,
   properties: {
     work_summary: {
       type: Type.STRING,
-      description: 'Concise summary of work performed; never hidden chain-of-thought.',
+      description:
+        'Concise summary of work performed; never hidden chain-of-thought.',
     },
     output: { type: Type.STRING, description: 'Result of this workflow step.' },
   },
   required: ['work_summary', 'output'],
+  additionalProperties: false,
 };
 
-export const INSPECTION_SCHEMA: Schema = {
+export const INSPECTION_SCHEMA: JsonSchema = {
   type: Type.OBJECT,
   properties: {
     response: {
@@ -164,4 +196,5 @@ export const INSPECTION_SCHEMA: Schema = {
     },
   },
   required: ['response', 'internal_state'],
+  additionalProperties: false,
 };
