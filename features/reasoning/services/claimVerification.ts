@@ -69,7 +69,9 @@ export const buildVerifiedClaim = (
     rationale = `${rationale} No external source metadata was attached, so the evidence judgment was downgraded.`;
   }
 
-  const correctedText = response.corrected_claim.trim();
+  const rawCorrection = response.corrected_claim.trim();
+  const correctedText =
+    status === 'contradicted' || status === 'mixed' ? rawCorrection : '';
 
   return {
     id: claim.id,
@@ -83,7 +85,9 @@ export const buildVerifiedClaim = (
 };
 
 const percentage = (numerator: number, denominator: number): number =>
-  denominator > 0 ? Math.round((numerator / denominator) * 100) : 0;
+  denominator > 0
+    ? Math.min(100, Math.round((numerator / denominator) * 100))
+    : 0;
 
 export const summarizeClaimVerification = (
   claims: VerifiedClaim[]
@@ -94,17 +98,22 @@ export const summarizeClaimVerification = (
   const domains = new Set<string>();
 
   for (const claim of claims) {
-    if (claim.status !== 'not_verifiable') summary.verifiableClaims += 1;
+    const isVerifiable = claim.status !== 'not_verifiable';
+    if (isVerifiable) summary.verifiableClaims += 1;
     if (claim.status === 'supported') summary.supportedClaims += 1;
     if (claim.status === 'contradicted') summary.contradictedClaims += 1;
     if (claim.status === 'mixed') summary.mixedClaims += 1;
     if (claim.status === 'not_found') summary.notFoundClaims += 1;
     if (claim.status === 'not_verifiable') summary.notVerifiableClaims += 1;
-    if (claim.sources.length > 0) summary.claimsWithSources += 1;
+    if (isVerifiable && claim.sources.length > 0) {
+      summary.claimsWithSources += 1;
+    }
 
-    for (const source of claim.sources) {
-      const domain = sourceDomain(source);
-      if (domain) domains.add(domain);
+    if (isVerifiable) {
+      for (const source of claim.sources) {
+        const domain = sourceDomain(source);
+        if (domain) domains.add(domain);
+      }
     }
   }
 
