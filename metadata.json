@@ -1,6 +1,6 @@
 {
   "name": "Veritas: Multi-Agent Reasoning",
-  "description": "A collaborative multi-agent system dedicated to radical truth. Three AI agents (Analyst, Skeptic, Judge) debate to ensure factual accuracy and eliminate hallucinations.",
+  "description": "An evidence-focused multi-agent reasoning interface where analyst, skeptic, judge, and optional validator agents produce status-aware answers without treating internal consensus as external verification.",
   "requestFramePermissions": [
     "microphone"
   ]
