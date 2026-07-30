@@ -58,7 +58,7 @@ export const TerminalText: React.FC<TerminalTextProps> = ({
       return;
     }
 
-    let interval: ReturnType<typeof window.setInterval> | undefined;
+    let interval: number | undefined;
 
     if (scramble) {
       interval = window.setInterval(() => {
