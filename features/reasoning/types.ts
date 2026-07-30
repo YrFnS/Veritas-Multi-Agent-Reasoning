@@ -34,6 +34,27 @@ export interface ProviderCapabilities {
   speech: boolean;
 }
 
+export type JsonSchemaType =
+  | 'object'
+  | 'array'
+  | 'string'
+  | 'number'
+  | 'integer'
+  | 'boolean'
+  | 'null';
+
+export interface JsonSchema {
+  type: JsonSchemaType;
+  description?: string;
+  properties?: Record<string, JsonSchema>;
+  items?: JsonSchema;
+  required?: string[];
+  enum?: string[];
+  additionalProperties?: boolean;
+  minItems?: number;
+  maxItems?: number;
+}
+
 export interface SystemConfig {
   global_rules: string;
   max_rounds: number;
@@ -236,7 +257,7 @@ export interface IReasoningCore {
     model: string,
     systemPrompt: string,
     userPrompt: string,
-    schema: any,
+    schema: JsonSchema,
     useTools: boolean,
     configOverrides: Partial<AgentConfig>,
     signal?: AbortSignal
