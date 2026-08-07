@@ -43,6 +43,7 @@ export const VeritasHeader: React.FC<VeritasHeaderProps> = ({
         {/* Mobile Menu Toggle */}
         <button 
           className="md:hidden text-veritas-cyan border border-zinc-800 p-1 px-2 hover:bg-zinc-900 transition-colors"
+          aria-label={isSidebarOpen ? 'Close active agents sidebar' : 'Open active agents sidebar'}
           onClick={() => setIsSidebarOpen(!isSidebarOpen)}
         >
           ☰
