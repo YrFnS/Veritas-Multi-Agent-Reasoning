@@ -1,10 +1,6 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
 import test from 'node:test';
-
-const config = JSON.parse(
-  await readFile(new URL('../vercel.json', import.meta.url), 'utf8')
-);
+import config from '../vercel.json' with { type: 'json' };
 
 test('Vercel serves direct SPA routes with baseline security headers', () => {
   assert.equal(config.framework, 'vite');

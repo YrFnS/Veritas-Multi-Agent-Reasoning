@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import type * as React from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ReasoningLog } from './features/reasoning/components/ReasoningLog';
 import { ConfigEditor } from './features/reasoning/components/ConfigEditor';
 import { VoiceControl } from './features/reasoning/components/VoiceControl';
