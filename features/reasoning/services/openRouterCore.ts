@@ -6,8 +6,13 @@ import type {
   SourceMetadata,
 } from '../types.js';
 import { throwIfAborted, waitForRetry } from './abortUtils.js';
+import { requireOpenRouterModelId } from './openRouterModels.js';
+import { redactProviderSecrets } from './providerKeys.js';
 import { createWebSource } from './sourceUtils.js';
 import { parseStrictJson } from './strictJson.js';
+
+export const OPENROUTER_CHAT_COMPLETIONS_URL =
+  'https://openrouter.ai/api/v1/chat/completions';
 
 interface OpenRouterAnnotation {
   type?: string;
@@ -26,6 +31,57 @@ interface OpenRouterResponse {
   }>;
 }
 
+class OpenRouterHttpError extends Error {
+  constructor(
+    message: string,
+    public readonly retryable: boolean
+  ) {
+    super(message);
+    this.name = 'OpenRouterHttpError';
+  }
+}
+
+const readOpenRouterError = async (
+  response: Response,
+  apiKey: string
+): Promise<OpenRouterHttpError> => {
+  if (response.status === 401 || response.status === 403) {
+    return new OpenRouterHttpError(
+      'OpenRouter rejected the API key. Re-enter it in CFG and try again.',
+      false
+    );
+  }
+  if (response.status === 402) {
+    return new OpenRouterHttpError(
+      'OpenRouter reports insufficient credits for this request. Check the account or select a free model.',
+      false
+    );
+  }
+  if (response.status === 429) {
+    return new OpenRouterHttpError(
+      'OpenRouter rate-limited the request. Wait briefly and try again.',
+      true
+    );
+  }
+
+  let details = '';
+  try {
+    const payload = (await response.json()) as {
+      error?: { message?: unknown };
+    };
+    if (typeof payload.error?.message === 'string') {
+      details = redactProviderSecrets(payload.error.message, [apiKey]);
+    }
+  } catch {
+    // Status-specific guidance below remains actionable without response JSON.
+  }
+
+  const message = `OpenRouter request failed (${response.status})${
+    details ? `: ${details}` : '. Try again or select another model.'
+  }`;
+  return new OpenRouterHttpError(message, response.status >= 500);
+};
+
 export class OpenRouterCore implements IReasoningCore {
   public readonly capabilities: ProviderCapabilities = {
     structuredOutput: true,
@@ -34,8 +90,6 @@ export class OpenRouterCore implements IReasoningCore {
     citations: false,
     speech: false,
   };
-
-  private readonly baseUrl = 'https://openrouter.ai/api/v1';
 
   constructor(private readonly apiKey: string) {}
 
@@ -48,6 +102,7 @@ export class OpenRouterCore implements IReasoningCore {
     configOverrides: Partial<AgentConfig> = {},
     signal?: AbortSignal
   ): Promise<{ data: unknown; sources?: SourceMetadata[] }> {
+    const modelId = requireOpenRouterModelId(model);
     const maxRetries = 2;
     let attempt = 0;
     let lastError: unknown;
@@ -56,16 +111,18 @@ export class OpenRouterCore implements IReasoningCore {
       throwIfAborted(signal);
 
       try {
-        const response = await fetch(`${this.baseUrl}/chat/completions`, {
+        const response = await fetch(OPENROUTER_CHAT_COMPLETIONS_URL, {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${this.apiKey}`,
             'Content-Type': 'application/json',
-            'HTTP-Referer': window.location.origin,
+            ...(typeof window !== 'undefined'
+              ? { 'HTTP-Referer': window.location.origin }
+              : {}),
             'X-Title': 'Veritas Truth Engine',
           },
           body: JSON.stringify({
-            model,
+            model: modelId,
             messages: [
               { role: 'system', content: systemPrompt },
               { role: 'user', content: userPrompt },
@@ -84,22 +141,42 @@ export class OpenRouterCore implements IReasoningCore {
           signal,
         });
 
-        if (!response.ok) {
-          const errorData = await response.json().catch(() => ({}));
-          const message =
-            (errorData as { error?: { message?: string } }).error?.message ||
-            `OpenRouter error: ${response.status}`;
-          throw new Error(message);
+        if (!response.ok) throw await readOpenRouterError(response, this.apiKey);
+
+        let result: OpenRouterResponse;
+        try {
+          result = (await response.json()) as OpenRouterResponse;
+        } catch {
+          throw new OpenRouterHttpError(
+            'OpenRouter returned malformed response JSON. Try another model or retry the request.',
+            false
+          );
         }
 
-        const result = (await response.json()) as OpenRouterResponse;
         const message = result.choices?.[0]?.message;
         const text = message?.content;
-        if (!text) throw new Error('Empty response from OpenRouter.');
+        if (typeof text !== 'string' || !text.trim()) {
+          throw new OpenRouterHttpError(
+            'OpenRouter returned a malformed completion. Try another model or retry the request.',
+            false
+          );
+        }
+
+        let data: unknown;
+        try {
+          data = parseStrictJson(text, 'OpenRouter');
+        } catch (error) {
+          throw new OpenRouterHttpError(
+            error instanceof Error
+              ? error.message
+              : 'OpenRouter returned invalid structured output.',
+            false
+          );
+        }
 
         return {
-          data: parseStrictJson(text, 'OpenRouter'),
-          sources: this.normalizeSources(message.annotations),
+          data,
+          sources: this.normalizeSources(message?.annotations),
         };
       } catch (error) {
         if (
@@ -113,12 +190,15 @@ export class OpenRouterCore implements IReasoningCore {
 
         lastError = error;
         attempt += 1;
-        if (attempt <= maxRetries) {
+        const retryable =
+          !(error instanceof OpenRouterHttpError) || error.retryable;
+        if (attempt <= maxRetries && retryable) {
           console.warn(
-            `OpenRouterCore: execution failed (attempt ${attempt}/${maxRetries}). Retrying...`,
-            error
+            `OpenRouter request failed; retrying (${attempt}/${maxRetries}).`
           );
           await waitForRetry(attempt * 1000, signal);
+        } else {
+          break;
         }
       }
     }

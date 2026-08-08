@@ -20,6 +20,7 @@
     "features/reasoning/services/geminiCore.ts",
     "features/reasoning/services/geminiService.ts",
     "features/reasoning/services/openRouterCore.ts",
+    "features/reasoning/services/openRouterModels.ts",
     "features/reasoning/services/prompts.ts",
     "features/reasoning/services/providerKeys.ts",
     "features/reasoning/services/reasoningOutcome.ts",

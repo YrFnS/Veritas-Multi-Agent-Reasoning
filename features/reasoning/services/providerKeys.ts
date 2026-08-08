@@ -62,6 +62,17 @@ export const writeProviderKey = (
   return keys;
 };
 
+export const redactProviderSecrets = (
+  value: string,
+  secrets: Array<string | undefined> = []
+): string => {
+  let redacted = value;
+  for (const secret of secrets.filter(Boolean) as string[]) {
+    redacted = redacted.replaceAll(secret, '[REDACTED]');
+  }
+  return redacted.replace(/\bsk-(?:or-v1-)?[A-Za-z0-9_-]{8,}\b/g, '[REDACTED]');
+};
+
 export const resolveProviderApiKey = (
   provider: ProviderType,
   storage: ProviderKeyStorage | undefined = getBrowserStorage()

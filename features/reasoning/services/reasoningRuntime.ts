@@ -20,7 +20,12 @@ export const getProviderConfig = (config: SystemConfig): ProviderConfig => {
   if (!config.provider) {
     throw new Error('INTERNAL_ERROR: No provider configured.');
   }
-  return config.provider;
+  if (!config.provider.model.trim()) {
+    throw new Error(
+      'Select a model in CFG before running AI actions. No model is selected automatically.'
+    );
+  }
+  return { ...config.provider, model: config.provider.model.trim() };
 };
 
 export const createReasoningCore = (

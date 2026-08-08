@@ -1,5 +1,7 @@
-import React, { useEffect, useState } from 'react';
-import type { ProviderType, SystemConfig } from '../types';
+import type * as React from 'react';
+import { useEffect, useState } from 'react';
+import type { ProviderConfig, ProviderType, SystemConfig } from '../types';
+import { OpenRouterModelPicker } from './OpenRouterModelPicker';
 import { PRESETS } from '../constants';
 import {
   validateAndNormalizeSystemConfig,
@@ -29,6 +31,36 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
   const [apiKeys, setApiKeys] = useState<ProviderKeyMap>(() =>
     readProviderKeys()
   );
+
+  const readEditorProvider = (): ProviderConfig => {
+    try {
+      const parsed = JSON.parse(jsonText) as { provider?: unknown };
+      if (typeof parsed.provider === 'object' && parsed.provider !== null) {
+        const provider = parsed.provider as Record<string, unknown>;
+        if (provider.type === 'gemini' || provider.type === 'openrouter') {
+          return {
+            type: provider.type,
+            model: typeof provider.model === 'string' ? provider.model : '',
+          };
+        }
+      }
+    } catch {
+      // The JSON editor displays its own parse error on apply.
+    }
+    return config.provider;
+  };
+
+  const editorProvider = readEditorProvider();
+
+  const updateEditorProvider = (provider: ProviderConfig) => {
+    try {
+      const parsed = JSON.parse(jsonText) as Record<string, unknown>;
+      setJsonText(JSON.stringify({ ...parsed, provider }, null, 2));
+      setError(null);
+    } catch {
+      setError('Fix the configuration JSON before changing provider settings.');
+    }
+  };
 
   useEffect(() => {
     try {
@@ -161,6 +193,55 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
           </div>
 
           <div className="flex-1 overflow-y-auto p-2 space-y-4">
+            <div className="space-y-2 px-2">
+              <div className="text-[10px] text-zinc-600 font-bold uppercase tracking-tighter">
+                Provider &amp; Model
+              </div>
+              <select
+                value={editorProvider.type}
+                onChange={(event) =>
+                  updateEditorProvider({
+                    type: event.target.value as ProviderType,
+                    model: '',
+                  })
+                }
+                aria-label="AI provider"
+                className="w-full bg-zinc-950 border border-zinc-800 text-[10px] font-mono text-zinc-300 p-1.5 focus:border-veritas-cyan/50 focus:outline-none"
+              >
+                <option value="gemini">Gemini</option>
+                <option value="openrouter">OpenRouter</option>
+              </select>
+
+              {editorProvider.type === 'openrouter' ? (
+                <OpenRouterModelPicker
+                  selectedModel={editorProvider.model}
+                  onSelect={(model) =>
+                    updateEditorProvider({ type: 'openrouter', model })
+                  }
+                />
+              ) : (
+                <div className="space-y-1">
+                  <label className="text-[9px] text-zinc-500 font-mono uppercase">
+                    Gemini model
+                  </label>
+                  <input
+                    type="text"
+                    value={editorProvider.model}
+                    onChange={(event) =>
+                      updateEditorProvider({
+                        type: 'gemini',
+                        model: event.target.value,
+                      })
+                    }
+                    aria-label="Gemini model ID"
+                    placeholder="Enter exact model ID"
+                    autoComplete="off"
+                    className="w-full bg-zinc-950 border border-zinc-800 text-[10px] font-mono text-zinc-300 p-1.5 focus:border-veritas-cyan/50 focus:outline-none"
+                  />
+                </div>
+              )}
+            </div>
+
             <div>
               <div className="text-[10px] text-zinc-600 font-bold mb-2 px-2 uppercase tracking-tighter">
                 Provider Keys (Browser Local)
@@ -169,7 +250,10 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
                 {(['gemini', 'openrouter'] as ProviderType[]).map((provider) => (
                   <div className="space-y-1" key={provider}>
                     <div className="flex items-center justify-between gap-2">
-                      <label className="text-[9px] text-zinc-500 font-mono uppercase">
+                      <label
+                        htmlFor={`${provider}-api-key`}
+                        className="text-[9px] text-zinc-500 font-mono uppercase"
+                      >
                         {provider}_api_key
                       </label>
                       {apiKeys[provider] && (
@@ -183,7 +267,9 @@ export const ConfigEditor: React.FC<ConfigEditorProps> = ({
                       )}
                     </div>
                     <input
+                      id={`${provider}-api-key`}
                       type="password"
+                      aria-label={`${provider} API key`}
                       value={apiKeys[provider] || ''}
                       onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
                         updateApiKey(provider, event.target.value)

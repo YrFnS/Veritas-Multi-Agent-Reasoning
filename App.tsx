@@ -14,6 +14,7 @@ import { useReasoningEngine } from './features/reasoning/hooks/useReasoningEngin
 import { useSoundFX } from './features/reasoning/hooks/useSoundFX';
 import { useCommandTerminal } from './features/reasoning/hooks/useCommandTerminal';
 import { parseSystemConfig } from './features/reasoning/validation/configValidation.js';
+import { readProviderKeys } from './features/reasoning/services/providerKeys.js';
 
 const CONFIG_STORAGE_KEY = 'veritas_system_config';
 
@@ -64,9 +65,18 @@ const App: React.FC = () => {
     ProcessState.CANCELLED,
     ProcessState.ERROR,
   ].includes(processState);
+  const selectedModel = config.provider.model.trim();
+  const hasProviderKey = Boolean(readProviderKeys()[config.provider.type]);
+  let providerSetupError: string | null = null;
+  if (!selectedModel) {
+    providerSetupError = 'Select a model in CFG before running AI actions.';
+  } else if (!hasProviderKey) {
+    providerSetupError = `Add your browser-local ${config.provider.type.toUpperCase()} key in CFG.`;
+  }
+  const isProviderReady = providerSetupError === null;
 
   const { userPrompt, setUserPrompt, handleInputKeyDown, handleExecute } =
-    useCommandTerminal(isProcessing, (prompt) => {
+    useCommandTerminal(isProcessing || !isProviderReady, (prompt) => {
       playActivate();
       startReasoning(prompt);
       logSystemEvent('EXEC_SEQUENCE_INIT');
@@ -315,17 +325,29 @@ const App: React.FC = () => {
               </Tooltip>
             ) : (
               <Tooltip
-                content="Initiate multi-agent reasoning (Enter)"
+                content={
+                  providerSetupError ?? 'Initiate multi-agent reasoning (Enter)'
+                }
                 position="left"
               >
                 <button
                   onClick={handleExecute}
-                  disabled={!userPrompt.trim()}
+                  disabled={!userPrompt.trim() || !isProviderReady}
                   className="w-full h-12 md:h-16 px-8 bg-veritas-cyan/10 border border-veritas-cyan text-veritas-cyan font-mono font-bold tracking-wider hover:bg-veritas-cyan hover:text-black transition-all disabled:opacity-30 disabled:cursor-not-allowed"
                 >
                   EXECUTE
                 </button>
               </Tooltip>
+            )}
+
+            {providerSetupError && !isProcessing && (
+              <button
+                type="button"
+                onClick={() => setIsEditingConfig(true)}
+                className="w-full text-[9px] text-amber-400 border border-amber-500/30 py-1 px-2 font-mono text-left hover:bg-amber-500/10"
+              >
+                CFG REQUIRED: {providerSetupError}
+              </button>
             )}
 
             {chatHistory.length > 0 && !isProcessing && (

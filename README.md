@@ -84,7 +84,7 @@ The browser bundle does not include the Google Gen AI SDK. Gemini structured res
 
 The default reasoning model is pinned to `gemini-3.6-flash` rather than a moving `latest` alias.
 
-Provider keys are separate. A Gemini key is never used as an OpenRouter fallback, and vice versa. OpenRouter uses strict JSON Schema output, but its current adapter does not provide Veritas web-search grounding. Claim validation is therefore skipped and clearly marked when OpenRouter is selected.
+Provider keys are separate. A Gemini key is never used as an OpenRouter fallback, and vice versa. OpenRouter models are loaded from its public `/api/v1/models` catalog, searched locally, and never defaulted; a user must select or manually enter an exact model ID before AI actions are enabled. OpenRouter uses strict JSON Schema output, but its current adapter does not provide Veritas web-search grounding. Claim validation is therefore skipped and clearly marked when OpenRouter is selected.
 
 ## API-key security
 
@@ -92,8 +92,9 @@ This repository is currently a client-only BYOK application. Keys entered in the
 
 - Do not use this mode on shared or untrusted devices.
 - Do not place provider keys in Vite environment variables for a hosted build.
-- Production deployments should move provider calls and keys to a server-side API or backend-for-frontend.
+- An OpenRouter key is sent only in the `Authorization: Bearer` header of direct `https://openrouter.ai/api/v1/chat/completions` requests; public model discovery does not send a key.
 - Use the **Forget** action in the configuration editor to remove a saved key.
+- A server-side API or backend-for-frontend remains the stronger production boundary for app-owned keys; this deployment intentionally has none.
 
 ## Reliability safeguards
 
@@ -174,7 +175,7 @@ npm install
 npm run dev
 ```
 
-Open the local URL shown by Vite, then open **CFG** and add the provider key you intend to use.
+Open the local URL shown by Vite, then open **CFG**, choose a provider, add its browser-local key, and select or enter an exact model ID. OpenRouter discovery is searchable, refreshable, and has a manual-ID fallback.
 
 ### 3. Validate the project
 
