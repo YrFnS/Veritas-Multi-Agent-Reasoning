@@ -8,6 +8,7 @@ import type {
   SystemConfig,
 } from '../types';
 import { MultiAgentService } from '../services/geminiService';
+import { parseAgentInspectionCommand } from '../services/agentInspection.js';
 
 const uuid = () =>
   globalThis.crypto?.randomUUID?.() ??
@@ -204,27 +205,20 @@ export const useReasoningEngine = (config: SystemConfig) => {
       const service = new MultiAgentService();
 
       try {
-        const interrogationMatch = userPrompt.match(/^@([\w_]+):\s*(.+)/i);
-        if (interrogationMatch) {
-          const targetName = interrogationMatch[1];
-          const query = interrogationMatch[2];
-          const targetAgent = config.agents.find(
-            (agent) =>
-              agent.name.toLowerCase() === targetName.toLowerCase() ||
-              agent.role.toLowerCase() === targetName.toLowerCase()
+        const inspection = parseAgentInspectionCommand(
+          userPrompt,
+          config.agents
+        );
+        if (inspection) {
+          await handleInterrogation(
+            service,
+            inspection.targetAgent,
+            inspection.query,
+            userPrompt,
+            chatHistory,
+            controller.signal
           );
-
-          if (targetAgent) {
-            await handleInterrogation(
-              service,
-              targetAgent,
-              query,
-              userPrompt,
-              chatHistory,
-              controller.signal
-            );
-            return;
-          }
+          return;
         }
 
         if (config.workflow?.length) {

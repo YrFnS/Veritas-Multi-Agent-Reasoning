@@ -10,6 +10,8 @@ const limits = {
 };
 
 const formatBytes = (bytes) => `${(bytes / 1024).toFixed(1)} kB`;
+const escapeWorkflowCommand = (value) =>
+  value.replaceAll('%', '%25').replaceAll('\r', '%0D').replaceAll('\n', '%0A');
 
 let assetNames;
 try {
@@ -72,7 +74,12 @@ if (totalCssBytes > limits.maxTotalCssBytes) {
 
 if (errors.length > 0) {
   console.error('\nBundle budget exceeded:');
-  for (const error of errors) console.error(`- ${error}`);
+  for (const error of errors) {
+    console.error(`- ${error}`);
+    console.error(
+      `::error file=scripts/check-bundle-size.mjs,title=Bundle budget exceeded::${escapeWorkflowCommand(error)}`
+    );
+  }
   process.exit(1);
 }
 

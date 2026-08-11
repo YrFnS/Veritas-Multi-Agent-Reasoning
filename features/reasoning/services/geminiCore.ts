@@ -34,6 +34,69 @@ interface GeminiResponse {
   };
 }
 
+type GeminiThinkingConfig =
+  | { thinkingLevel: 'MINIMAL' | 'LOW' | 'HIGH' }
+  | { thinkingBudget: number };
+
+const normalizeGeminiModelId = (model: string): string =>
+  model.replace(/^models\//i, '').trim().toLowerCase();
+
+const readGeminiVersion = (
+  model: string
+): { major: number; minor?: number } | null => {
+  const match = normalizeGeminiModelId(model).match(
+    /^gemini-(\d+)(?:\.(\d+))?(?:[.-]|$)/
+  );
+  if (!match) return null;
+
+  return {
+    major: Number(match[1]),
+    ...(match[2] !== undefined ? { minor: Number(match[2]) } : {}),
+  };
+};
+
+export const shouldOmitGeminiSampling = (model: string): boolean => {
+  const normalized = normalizeGeminiModelId(model);
+  if (normalized === 'gemini-flash-latest') return true;
+
+  const version = readGeminiVersion(normalized);
+  if (!version) return false;
+  if (version.major > 3) return true;
+  return version.major === 3 && (version.minor ?? 0) >= 5;
+};
+
+const resolveThinkingLevel = (
+  model: string,
+  thinkingBudget: number | undefined
+): 'MINIMAL' | 'LOW' | 'HIGH' => {
+  const normalized = normalizeGeminiModelId(model);
+  if (thinkingBudget === 0) {
+    return normalized.includes('-pro') ? 'LOW' : 'MINIMAL';
+  }
+  if (thinkingBudget !== undefined && thinkingBudget < 4000) return 'LOW';
+  return 'HIGH';
+};
+
+export const buildGeminiThinkingConfig = (
+  model: string,
+  thinkingBudget: number | undefined
+): GeminiThinkingConfig | undefined => {
+  const normalized = normalizeGeminiModelId(model);
+  if (/^gemini-2\.5(?:[.-]|$)/.test(normalized)) {
+    return thinkingBudget === undefined ? undefined : { thinkingBudget };
+  }
+
+  const version = readGeminiVersion(normalized);
+  const usesThinkingLevel =
+    normalized === 'gemini-flash-latest' ||
+    normalized === 'gemini-pro-latest' ||
+    Boolean(version && version.major >= 3);
+
+  return usesThinkingLevel
+    ? { thinkingLevel: resolveThinkingLevel(normalized, thinkingBudget) }
+    : undefined;
+};
+
 class GeminiHttpError extends Error {
   constructor(
     message: string,
@@ -76,19 +139,18 @@ export class GeminiCore implements IReasoningCore {
       throwIfAborted(signal);
 
       try {
+        const thinkingConfig = buildGeminiThinkingConfig(
+          model,
+          configOverrides.thinkingBudget
+        );
         const generationConfig: Record<string, unknown> = {
           responseMimeType: 'application/json',
           responseJsonSchema: schema,
-          thinkingConfig: {
-            thinkingLevel: this.resolveThinkingLevel(
-              configOverrides.thinkingBudget
-            ),
-          },
+          ...(thinkingConfig ? { thinkingConfig } : {}),
           maxOutputTokens: 32768,
         };
 
-        const usesModernGeminiSampling = /^gemini-3\.(5|6)/.test(model);
-        if (!usesModernGeminiSampling) {
+        if (!shouldOmitGeminiSampling(model)) {
           generationConfig.temperature = configOverrides.temperature ?? 0.1;
           if (configOverrides.topK !== undefined) {
             generationConfig.topK = configOverrides.topK;
@@ -191,7 +253,7 @@ export class GeminiCore implements IReasoningCore {
     body: Record<string, unknown>,
     signal?: AbortSignal
   ): Promise<GeminiResponse> {
-    const modelId = model.replace(/^models\//, '');
+    const modelId = model.replace(/^models\//i, '');
     const response = await fetch(
       `${this.baseUrl}/${encodeURIComponent(modelId)}:generateContent`,
       {
@@ -216,12 +278,6 @@ export class GeminiCore implements IReasoningCore {
     }
 
     return payload;
-  }
-
-  private resolveThinkingLevel(thinkingBudget: number | undefined): string {
-    if (thinkingBudget === 0) return 'MINIMAL';
-    if (thinkingBudget !== undefined && thinkingBudget < 4000) return 'LOW';
-    return 'HIGH';
   }
 
   private readText(candidate: GeminiCandidate | undefined): string {
