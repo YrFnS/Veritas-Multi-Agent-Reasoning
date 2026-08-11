@@ -42,12 +42,15 @@ const readOptionalNumber = (
   value: unknown,
   path: string,
   errors: string[],
-  limits?: { min?: number; max?: number }
+  limits?: { min?: number; max?: number; integer?: boolean }
 ): number | undefined => {
   if (value === undefined) return undefined;
   if (typeof value !== 'number' || !Number.isFinite(value)) {
     errors.push(`${path} must be a finite number.`);
     return undefined;
+  }
+  if (limits?.integer && !Number.isInteger(value)) {
+    errors.push(`${path} must be an integer.`);
   }
   if (limits?.min !== undefined && value < limits.min) {
     errors.push(`${path} must be at least ${limits.min}.`);
@@ -86,6 +89,7 @@ const parseAgent = (
   );
   const topK = readOptionalNumber(value.topK, `${path}.topK`, errors, {
     min: 1,
+    integer: true,
   });
   const topP = readOptionalNumber(value.topP, `${path}.topP`, errors, {
     min: 0,
@@ -95,7 +99,7 @@ const parseAgent = (
     value.thinkingBudget,
     `${path}.thinkingBudget`,
     errors,
-    { min: 0 }
+    { min: 0, integer: true }
   );
 
   if (temperature !== undefined) agent.temperature = temperature;
